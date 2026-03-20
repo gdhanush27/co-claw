@@ -1,0 +1,256 @@
+{
+  "name": "CoClaw",
+  "displayName": "CoClaw",
+  "description": "AI coding assistant with persistent memory, powered by GitHub Copilot",
+  "version": "0.1.0",
+  "publisher": "gdhanush270",
+  "license": "Apache-2.0",
+  "icon": "icon.png",
+  "galleryBanner": {
+    "color": "#0a0a1a",
+    "theme": "dark"
+  },
+  "keywords": [
+    "copilot",
+    "ai",
+    "memory",
+    "assistant",
+    "chat",
+    "agent"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gdhanush270/CoClaw"
+  },
+  "engines": {
+    "vscode": "^1.93.0"
+  },
+  "extensionDependencies": [
+    "github.copilot-chat"
+  ],
+  "categories": [
+    "AI",
+    "Chat"
+  ],
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "chatParticipants": [
+      {
+        "id": "CoClaw.assistant",
+        "name": "CoClaw",
+        "fullName": "CoClaw",
+        "description": "Your AI pair programmer with persistent memory",
+        "isSticky": true,
+        "commands": [
+          {
+            "name": "memory",
+            "description": "Show what CoClaw remembers"
+          },
+          {
+            "name": "distill",
+            "description": "Distill recent logs into long-term memory"
+          },
+          {
+            "name": "clear",
+            "description": "Clear session memory"
+          },
+          {
+            "name": "soul",
+            "description": "Edit CoClaw's identity and behavior"
+          }
+        ]
+      }
+    ],
+    "languageModelTools": [
+      {
+        "name": "CoClaw_memory_read",
+        "displayName": "Read Memory",
+        "modelDescription": "Reads stored memory entries from CoClaw's memory store",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "Keyword to search for in memory"
+            },
+            "layer": {
+              "type": "string",
+              "enum": ["daily", "longterm", "all"],
+              "description": "Which memory layer to search"
+            }
+          }
+        }
+      },
+      {
+        "name": "CoClaw_memory_write",
+        "displayName": "Write Memory",
+        "modelDescription": "Saves a new fact or preference to CoClaw's long-term memory",
+        "inputSchema": {
+          "type": "object",
+          "required": ["content", "type"],
+          "properties": {
+            "content": {
+              "type": "string",
+              "description": "The memory content to store"
+            },
+            "type": {
+              "type": "string",
+              "enum": ["fact", "preference", "decision", "code_context"],
+              "description": "Type of memory entry"
+            },
+            "importance": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Importance weight (0-1)"
+            }
+          }
+        }
+      },
+      {
+        "name": "CoClaw_memory_delete",
+        "displayName": "Delete Memory",
+        "modelDescription": "Deletes a memory entry from CoClaw's memory store by ID or search query. Use CoClaw_memory_read first to find entries, then delete by id.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "description": "The exact ID of the memory entry to delete"
+            },
+            "query": {
+              "type": "string",
+              "description": "Search query to find the memory to delete (used when id is not known)"
+            }
+          }
+        }
+      },
+      {
+        "name": "CoClaw_memory_update",
+        "displayName": "Update Memory",
+        "modelDescription": "Updates an existing memory entry's content, type, or importance. Use CoClaw_memory_read first to find the entry, then update by id.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "description": "The exact ID of the memory entry to update"
+            },
+            "query": {
+              "type": "string",
+              "description": "Search query to find the memory to update (used when id is not known)"
+            },
+            "content": {
+              "type": "string",
+              "description": "New content for the memory entry"
+            },
+            "type": {
+              "type": "string",
+              "enum": ["fact", "preference", "decision", "code_context", "convention", "pattern"],
+              "description": "New type for the memory entry"
+            },
+            "importance": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "New importance weight (0-1)"
+            }
+          }
+        }
+      },
+      {
+        "name": "CoClaw_workspace_context",
+        "displayName": "Get Workspace Context",
+        "modelDescription": "Gets the active file, selection, and open tabs in VS Code",
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        }
+      }
+    ],
+    "commands": [
+      {
+        "command": "CoClaw.selectModel",
+        "title": "CoClaw: Select Model"
+      },
+      {
+        "command": "CoClaw.showMemory",
+        "title": "CoClaw: Browse Memory"
+      },
+      {
+        "command": "CoClaw.clearMemory",
+        "title": "CoClaw: Clear Session Memory"
+      },
+      {
+        "command": "CoClaw.editSoul",
+        "title": "CoClaw: Edit Identity (SOUL)"
+      },
+      {
+        "command": "CoClaw.editProfile",
+        "title": "CoClaw: Edit Profile (USER)"
+      },
+      {
+        "command": "CoClaw.distill",
+        "title": "CoClaw: Distill to Long-Term Memory"
+      },
+      {
+        "command": "CoClaw.importMemories",
+        "title": "CoClaw: Import Memories"
+      },
+      {
+        "command": "CoClaw.exportMemories",
+        "title": "CoClaw: Export Memories"
+      },
+      {
+        "command": "CoClaw.stop",
+        "title": "CoClaw: Stop Response",
+        "icon": "$(debug-stop)"
+      }
+    ],
+    "configuration": {
+      "title": "CoClaw",
+      "properties": {
+        "CoClaw.model.family": {
+          "type": "string",
+          "description": "Preferred Copilot model family (workspace override)",
+          "default": ""
+        },
+        "CoClaw.memory.maxLongTermEntries": {
+          "type": "number",
+          "default": 100,
+          "description": "Maximum number of long-term memory entries"
+        },
+        "CoClaw.memory.dailyLogsRetentionDays": {
+          "type": "number",
+          "default": 30,
+          "description": "Number of days to retain daily logs"
+        },
+        "CoClaw.memory.autoExtract": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically extract facts from responses into daily log"
+        },
+        "CoClaw.memory.tokenBudgetPercent": {
+          "type": "number",
+          "default": 20,
+          "description": "Max % of model context window to use for memory injection"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "node esbuild.js --production",
+    "watch": "node esbuild.js --watch",
+    "lint": "eslint src --ext ts",
+    "package": "vsce package --allow-missing-repository"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.93.0",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.3.0"
+  }
+}
