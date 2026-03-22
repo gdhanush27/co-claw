@@ -1,100 +1,90 @@
-<p align="center">
-  <img src="icon.png" alt="CoClaw Logo" width="150" />
-</p>
+# CoClaw
 
-<h1 align="center">CoClaw</h1>
+AI coding assistant with persistent memory, powered by GitHub Copilot.
 
-<p align="center">
-  <strong>AI coding assistant with persistent memory, powered by GitHub Copilot.</strong>
-</p>
-
-<p align="center">
-  <img src="https://img.shields.io/badge/VS%20Code-1.93%2B-blue?logo=visual-studio-code" alt="VS Code 1.93+" />
-  <img src="https://img.shields.io/badge/Copilot-Required-orange?logo=github" alt="Copilot Required" />
-  <img src="https://img.shields.io/badge/License-Apache-green" alt="Apache License" />
-</p>
+![VS Code](https://img.shields.io/badge/VS%20Code-1.93%2B-blue?logo=visual-studio-code)
+![Copilot Required](https://img.shields.io/badge/Copilot-Required-orange?logo=github)
+![License](https://img.shields.io/badge/License-Apache-green)
 
 ---
 
-CoClaw adds a persistent memory layer to GitHub Copilot's LLM via the VS Code Language Model API. Instead of losing context between sessions, CoClaw stores and retrieves relevant memories — code conventions, user preferences, project patterns, past decisions — and injects them into LLM prompts automatically.
+CoClaw adds a persistent memory layer to GitHub Copilot through the VS Code Language Model API. It stores and recalls relevant context across sessions (preferences, code conventions, patterns, and decisions) and injects it into prompts automatically.
 
 ## Features
 
-- **Persistent Memory** — Two-layer memory system (daily session logs + long-term distilled memory)
-- **Automatic Memory Extraction** — Facts, decisions, and preferences extracted from every conversation
-- **Agentic Coding** — Uses VS Code tools to read, edit, and search files autonomously with workspace-scoped safety
-- **Model Switching** — Click the status bar to switch between available Copilot models
-- **Identity System** — Customizable assistant persona (SOUL.json) and user preferences (USER.json)
-- **Memory Browser** — Webview panel to browse, edit, promote, and delete memory entries
-- **LM Tools** — Agent-mode tools for reading/writing memory mid-conversation
-- **Import/Export** — Backup and restore memories as JSON
-- **Progress Indicators** — Live status bar spinner and per-tool progress while working
+- **Persistent Memory** - Two-layer memory (daily logs + long-term memory)
+- **Automatic Extraction** - Captures facts, decisions, and preferences from conversations
+- **Agentic Coding** - Uses VS Code tools to read/edit/search within workspace boundaries
+- **Memory Browser** - Inspect, edit, promote, and delete memory entries
+- **Model Switching** - Choose available Copilot models from the status bar
+- **Identity + Profile** - Customize assistant persona (`SOUL.json`) and user preferences (`USER.json`)
+- **Import/Export** - Backup and restore memories as JSON
+- **Telegram Bridge** - Control CoClaw remotely from Telegram
 
 ## Requirements
 
-- VS Code 1.93+
-- GitHub Copilot Chat extension
+- VS Code `1.93+`
+- GitHub Copilot Chat extension (`github.copilot-chat`)
 
 ## Usage
 
 ### Chat
 
-Type `@CoClaw` in the chat panel to start a conversation with memory-augmented responses.
+Use `@CoClaw` in Copilot Chat for memory-augmented responses.
 
 ### Slash Commands
 
 | Command | Description |
 |---|---|
 | `/memory` | Show what CoClaw remembers |
-| `/distill` | Distill daily logs into long-term memory |
-| `/clear` | Clear today's session memory |
-| `/soul` | Edit CoClaw's identity/behavior |
+| `/distill` | Distill recent logs into long-term memory |
+| `/clear` | Clear session memory |
+| `/soul` | Edit CoClaw identity and behavior |
+| `/auto` | Start Telegram bridge for remote control |
 
-### Commands (Command Palette)
+### Command Palette
 
 | Command | Description |
 |---|---|
-| `CoClaw: Select Model` | Switch Copilot model via QuickPick |
-| `CoClaw: Browse Memory` | Open memory browser webview |
-| `CoClaw: Clear Session Memory` | Clear today's daily log |
-| `CoClaw: Edit Identity (SOUL)` | Open SOUL.json in editor |
-| `CoClaw: Edit Profile (USER)` | Open USER.json in editor |
-| `CoClaw: Distill to Long-Term Memory` | AI-powered distillation of daily logs |
-| `CoClaw: Import Memories` | Import memories from JSON file |
-| `CoClaw: Export Memories` | Export all memories to JSON file |
+| `CoClaw: Select Model` | Switch Copilot model |
+| `CoClaw: Browse Memory` | Open memory browser |
+| `CoClaw: Clear Session Memory` | Clear today’s daily log |
+| `CoClaw: Edit Identity (SOUL)` | Open `SOUL.json` |
+| `CoClaw: Edit Profile (USER)` | Open `USER.json` |
+| `CoClaw: Distill to Long-Term Memory` | Distill daily logs |
+| `CoClaw: Import Memories` | Import memories from JSON |
+| `CoClaw: Export Memories` | Export memories to JSON |
+| `CoClaw: Deduplicate Memory` | Remove duplicate memory entries |
+| `CoClaw: Stop Response` | Stop the active CoClaw response |
+| `CoClaw: Link Telegram Bot` | Link your Telegram bot |
+| `CoClaw: Unlink Telegram Bot` | Remove Telegram link |
+| `CoClaw: Open Settings` | Open CoClaw settings |
 
 ## Settings
 
 | Setting | Default | Description |
 |---|---|---|
-| `CoClaw.model.family` | `""` | Preferred Copilot model family (workspace override) |
-| `CoClaw.memory.maxLongTermEntries` | `100` | Max long-term memory entries |
-| `CoClaw.memory.dailyLogsRetentionDays` | `30` | Days to retain daily logs |
-| `CoClaw.memory.autoExtract` | `true` | Auto-extract facts from conversations |
-| `CoClaw.memory.tokenBudgetPercent` | `20` | Max % of context window for memory injection |
-| `CoClaw.memory.autoDistillThreshold` | `20` | Auto-distill when daily log reaches this many entries (0 to disable) |
-| `CoClaw.memory.autoDistillIntervalHours` | `24` | Auto-distill interval in hours (0 to disable) |
-| `CoClaw.memory.staleAfterDays` | `14` | Downgrade entries not referenced in this many days (0 to disable) |
+| `CoClaw.model.family` | `""` | Preferred Copilot model family |
+| `CoClaw.memory.maxLongTermEntries` | `100` | Max long-term entries |
+| `CoClaw.memory.dailyLogsRetentionDays` | `30` | Daily log retention (days) |
+| `CoClaw.memory.autoExtract` | `true` | Auto-extract conversation facts |
+| `CoClaw.memory.tokenBudgetPercent` | `20` | Max context % for memory injection |
+| `CoClaw.memory.autoDistillThreshold` | `20` | Auto-distill when daily log reaches this count (`0` disables) |
+| `CoClaw.memory.autoDistillIntervalHours` | `24` | Auto-distill interval in hours (`0` disables) |
+| `CoClaw.memory.staleAfterDays` | `14` | Reduce ranking weight for stale memories (`0` disables) |
 
 ## How Memory Works
 
-1. **During chat**: CoClaw retrieves relevant memories and injects them into the system prompt
-2. **After each response**: A secondary LM call extracts notable facts, preferences, and decisions
-3. **Daily logs**: Raw extracted facts stored per-day as JSON
-4. **Long-term memory**: Distilled, curated entries that persist indefinitely
-5. **Recall**: Entries ranked by `recency × importance × keyword_overlap` and injected within token budget
+1. **Recall:** CoClaw ranks relevant memories and injects them into prompt context.
+2. **Extraction:** After each response, it extracts facts/preferences/decisions.
+3. **Daily Logs:** Extracted items are saved per day.
+4. **Distillation:** Daily logs are compressed into curated long-term memory.
+5. **Reuse:** Long-term memory is reused across future sessions.
 
 ## Privacy
 
-All memories are stored locally in VS Code's global storage. No data is sent to external services beyond the Copilot API calls. CoClaw enforces workspace boundaries — it will never read or write files outside your current workspace.
+All memory data is stored locally in VS Code global storage. No external service is used beyond GitHub Copilot API calls. CoClaw enforces workspace boundaries and does not access files outside the current workspace.
 
 ## License
 
-[Apache](LICENSE)
-
----
-
-<p align="center">
-  <img src="icon.png" alt="CoClaw" width="40" /><br/>
-  <sub>Built with ❤️ by <a href="https://github.com/gdhanush27">gdhanush27</a></sub>
-</p>
+[Apache-2.0](LICENSE)
