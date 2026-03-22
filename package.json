@@ -2,7 +2,7 @@
   "name": "CoClaw",
   "displayName": "CoClaw",
   "description": "AI coding assistant with persistent memory, powered by GitHub Copilot",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "publisher": "gdhanush270",
   "license": "Apache-2.0",
   "icon": "icon.png",
@@ -20,7 +20,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/gdhanush270/CoClaw"
+    "url": "https://github.com/gdhanush27/Co-Claw"
   },
   "engines": {
     "vscode": "^1.93.0"
@@ -58,6 +58,10 @@
           {
             "name": "soul",
             "description": "Edit CoClaw's identity and behavior"
+          },
+          {
+            "name": "auto",
+            "description": "Start Telegram bridge — control CoClaw from Telegram with full tool access"
           }
         ]
       }
@@ -76,7 +80,11 @@
             },
             "layer": {
               "type": "string",
-              "enum": ["daily", "longterm", "all"],
+              "enum": [
+                "daily",
+                "longterm",
+                "all"
+              ],
               "description": "Which memory layer to search"
             }
           }
@@ -88,7 +96,10 @@
         "modelDescription": "Saves a new fact or preference to CoClaw's long-term memory",
         "inputSchema": {
           "type": "object",
-          "required": ["content", "type"],
+          "required": [
+            "content",
+            "type"
+          ],
           "properties": {
             "content": {
               "type": "string",
@@ -96,7 +107,12 @@
             },
             "type": {
               "type": "string",
-              "enum": ["fact", "preference", "decision", "code_context"],
+              "enum": [
+                "fact",
+                "preference",
+                "decision",
+                "code_context"
+              ],
               "description": "Type of memory entry"
             },
             "importance": {
@@ -111,7 +127,7 @@
       {
         "name": "CoClaw_memory_delete",
         "displayName": "Delete Memory",
-        "modelDescription": "Deletes a memory entry from CoClaw's memory store by ID or search query. Use CoClaw_memory_read first to find entries, then delete by id.",
+        "modelDescription": "Deletes memory entries from CoClaw's memory store. Can delete by ID, search query, or clear an entire layer. Pass layer='all' without id/query to wipe everything. Pass layer='longterm' or layer='daily' to clear that layer. Pass query to search-and-delete individual entries.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -122,6 +138,15 @@
             "query": {
               "type": "string",
               "description": "Search query to find the memory to delete (used when id is not known)"
+            },
+            "layer": {
+              "type": "string",
+              "enum": [
+                "daily",
+                "longterm",
+                "all"
+              ],
+              "description": "Memory layer to target. When used without id/query, clears all entries in that layer."
             }
           }
         }
@@ -147,7 +172,14 @@
             },
             "type": {
               "type": "string",
-              "enum": ["fact", "preference", "decision", "code_context", "convention", "pattern"],
+              "enum": [
+                "fact",
+                "preference",
+                "decision",
+                "code_context",
+                "convention",
+                "pattern"
+              ],
               "description": "New type for the memory entry"
             },
             "importance": {
@@ -206,6 +238,72 @@
         "command": "CoClaw.stop",
         "title": "CoClaw: Stop Response",
         "icon": "$(debug-stop)"
+      },
+      {
+        "command": "CoClaw.linkTelegram",
+        "title": "CoClaw: Link Telegram Bot"
+      },
+      {
+        "command": "CoClaw.unlinkTelegram",
+        "title": "CoClaw: Unlink Telegram Bot"
+      },
+      {
+        "command": "CoClaw.openSettings",
+        "title": "CoClaw: Open Settings"
+      }
+    ],
+    "walkthroughs": [
+      {
+        "id": "CoClaw.welcome",
+        "title": "Get Started with CoClaw",
+        "description": "Learn how CoClaw adds persistent memory to GitHub Copilot.",
+        "steps": [
+          {
+            "id": "CoClaw.welcome.intro",
+            "title": "What is CoClaw?",
+            "description": "CoClaw enhances GitHub Copilot with a persistent memory layer. It remembers your code conventions, preferences, and project decisions across sessions — and injects them into every LLM prompt automatically.\n\n[Open Chat](command:workbench.action.chat.open)",
+            "media": {
+              "altText": "CoClaw overview",
+              "image": "images/icon.png"
+            }
+          },
+          {
+            "id": "CoClaw.welcome.profile",
+            "title": "Set Up Your Profile",
+            "description": "Tell CoClaw about your coding preferences — language, style, indentation, frameworks. This helps it tailor responses to your workflow.\n\n[Edit USER.json](command:CoClaw.editProfile)",
+            "media": {
+              "altText": "User profile setup",
+              "image": "images/icon.png"
+            }
+          },
+          {
+            "id": "CoClaw.welcome.soul",
+            "title": "Customize the Assistant Persona",
+            "description": "CoClaw's personality is defined in SOUL.json. Change its name, role, tone, or instructions to match your preferences.\n\n[Edit SOUL.json](command:CoClaw.editSoul)",
+            "media": {
+              "altText": "Soul configuration",
+              "image": "images/icon.png"
+            }
+          },
+          {
+            "id": "CoClaw.welcome.usage",
+            "title": "Start a Conversation",
+            "description": "Type **@CoClaw** in the GitHub Copilot Chat panel to start a memory-augmented conversation. Use slash commands:\n- `/memory` — See what CoClaw remembers\n- `/distill` — Save daily facts to long-term memory\n- `/clear` — Clear today's session log\n- `/soul` — Edit the assistant persona\n\n[Open Chat](command:workbench.action.chat.open)",
+            "media": {
+              "altText": "Using CoClaw in chat",
+              "image": "images/icon.png"
+            }
+          },
+          {
+            "id": "CoClaw.welcome.memory",
+            "title": "Browse & Manage Memories",
+            "description": "Open the Memory Browser to see all stored entries, filter by type, promote daily logs to long-term memory, or delete entries.\n\n[Open Memory Browser](command:CoClaw.showMemory)",
+            "media": {
+              "altText": "Memory browser",
+              "image": "images/icon.png"
+            }
+          }
+        ]
       }
     ],
     "configuration": {
@@ -235,6 +333,21 @@
           "type": "number",
           "default": 20,
           "description": "Max % of model context window to use for memory injection"
+        },
+        "CoClaw.memory.autoDistillThreshold": {
+          "type": "number",
+          "default": 20,
+          "description": "Auto-distill when daily log reaches this many entries (0 to disable)"
+        },
+        "CoClaw.memory.autoDistillIntervalHours": {
+          "type": "number",
+          "default": 24,
+          "description": "Auto-distill interval in hours (0 to disable scheduled distill)"
+        },
+        "CoClaw.memory.staleAfterDays": {
+          "type": "number",
+          "default": 14,
+          "description": "Long-term entries not referenced in this many days are downgraded in recall ranking (0 to disable)"
         }
       }
     }
@@ -244,13 +357,17 @@
     "build": "node esbuild.js --production",
     "watch": "node esbuild.js --watch",
     "lint": "eslint src --ext ts",
+    "test": "mocha --require ts-node/register --require src/test/setup.ts src/test/**/*.test.ts --timeout 10000",
     "package": "vsce package --allow-missing-repository"
   },
   "devDependencies": {
+    "@types/mocha": "^10.0.10",
     "@types/node": "^20.11.0",
     "@types/vscode": "^1.93.0",
     "@vscode/vsce": "^3.0.0",
     "esbuild": "^0.25.0",
+    "mocha": "^11.7.5",
+    "ts-node": "^10.9.2",
     "typescript": "^5.3.0"
   }
 }

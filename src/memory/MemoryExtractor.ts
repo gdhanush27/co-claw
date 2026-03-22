@@ -15,22 +15,31 @@ export class MemoryExtractor {
             return [];
         }
 
-        const extractPrompt = `From this conversation exchange, extract ONLY truly important and novel information worth remembering for future coding sessions.
+        const extractPrompt = `You are a memory extraction engine. Your job is to identify ONLY information worth persisting for future coding sessions.
 
-Strict rules:
-- Return at most 3 entries.
-- Only extract: user preferences, project decisions, code conventions, or important technical facts.
-- Do NOT extract: greetings, assistant identity info, system status, trivial exchanges, or things already obvious from context.
-- If the conversation is casual chat with no notable coding information, return an empty array [].
-- Be very selective — only store what would genuinely help in a future coding session.
+EXTRACT these categories (use the exact type names):
+- "convention": Coding style rules, naming conventions, formatting standards (e.g. "Uses camelCase for variables", "Always adds trailing comma")
+- "decision": Architecture or design decisions (e.g. "Chose PostgreSQL over MongoDB", "Using monorepo structure")
+- "preference": User's personal preferences for tools, frameworks, patterns (e.g. "Prefers functional components over class components")
+- "fact": Important technical facts about the project (e.g. "API runs on port 3000", "Auth uses JWT")
+- "code_context": Key structural info about files, modules, or APIs (e.g. "UserService handles all auth logic in src/services/")
+- "pattern": Recurring code patterns or idioms the user follows (e.g. "Uses factory pattern for service instantiation")
 
-Return ONLY a JSON array of objects with these fields:
-- type: one of "fact", "decision", "preference", "code_context", "convention", "pattern"
-- content: a concise one-sentence description
-- importance: a number from 0 to 1 (only use >0.7 for genuinely important things)
-- tags: an array of relevant keyword tags
+SKIP (do NOT extract):
+- Greetings, pleasantries, or small talk
+- Information about the assistant's identity or capabilities
+- Transient details (error messages being debugged, temporary log output)
+- Things obvious from the code itself (e.g. "this file imports React")
+- Rehashes of what the user just asked (the question itself is not a memory)
+- Generic programming knowledge (e.g. "JavaScript is single-threaded")
 
-Return an empty array [] if nothing notable was said.
+RULES:
+- Return at most 3 entries. Quality over quantity.
+- Each entry must be a single concise sentence.
+- importance: 0.3-0.5 for nice-to-know, 0.5-0.7 for useful, 0.7-1.0 for critical decisions/conventions.
+- If NOTHING notable was said, return an empty array [].
+
+Return ONLY a JSON array of objects: { type, content, importance, tags }
 
 User message: ${userMessage}
 

@@ -1,3 +1,4 @@
+import * as vscode from 'vscode';
 import { MemoryEntry, MemorySearchResult } from './types';
 
 export class MemoryRecall {
@@ -62,8 +63,16 @@ export class MemoryRecall {
         const ageDays = ageMs / (24 * 60 * 60 * 1000);
         const recencyScore = Math.max(0, 1 - ageDays / 30);
 
-        // Combined score: keyword_overlap * importance * recency
-        return keywordScore * entry.importance * (0.5 + 0.5 * recencyScore);
+        // Staleness penalty: entries not used in N days get downgraded
+        const staleAfterDays = vscode.workspace.getConfiguration('CoClaw.memory').get<number>('staleAfterDays', 14);
+        let stalenessPenalty = 1.0;
+        if (staleAfterDays > 0 && !entry.pinned && ageDays > staleAfterDays) {
+            // Linearly penalize: at 2x staleAfterDays, score is halved
+            stalenessPenalty = Math.max(0.2, 1.0 - (ageDays - staleAfterDays) / (staleAfterDays * 2));
+        }
+
+        // Combined score: keyword_overlap * importance * recency * staleness
+        return keywordScore * entry.importance * (0.5 + 0.5 * recencyScore) * stalenessPenalty;
     }
 
     private topByImportance(

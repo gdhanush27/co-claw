@@ -66,7 +66,7 @@ export class ToolRunner {
                         messages.push(vscode.LanguageModelChatMessage.Assistant(roundText));
                     }
                     messages.push(vscode.LanguageModelChatMessage.User(
-                        'If there are remaining files to edit, continue making changes now using tools. If the task is complete, say so briefly.'
+                        'If there are remaining files to edit, continue making changes now using tools. Otherwise, stop here.'
                     ));
                     try {
                         currentResponse = await model.sendRequest(messages, { tools }, token);

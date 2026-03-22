@@ -26,7 +26,11 @@ export class MemoryEngine {
             this.longTermMemory.getAll(),
         ]);
 
-        const results = this.recaller.recall(query, daily, longterm, maxTokens);
+        // Filter entries to current workspace to prevent cross-project memory leakage
+        const filteredDaily = this.filterByWorkspace(daily);
+        const filteredLongterm = this.filterByWorkspace(longterm);
+
+        const results = this.recaller.recall(query, filteredDaily, filteredLongterm, maxTokens);
 
         // Mark used entries
         for (const r of results) {
@@ -52,18 +56,27 @@ export class MemoryEngine {
         const topFacts = facts.slice(0, 3);
 
         for (const fact of topFacts) {
-            // Deduplication: check if similar content already exists in today's log
-            const existing = await this.dailyLog.getTodayEntries();
-            const isDuplicate = existing.some(e =>
+            // Deduplication: check daily log AND long-term memory for similar content
+            const [todayEntries, longtermEntries] = await Promise.all([
+                this.dailyLog.getTodayEntries(),
+                this.longTermMemory.getAll(),
+            ]);
+            const allExisting = [...todayEntries, ...longtermEntries];
+            const isDuplicate = allExisting.some(e =>
                 e.content.toLowerCase() === fact.content.toLowerCase() ||
                 this.isSimilar(e.content, fact.content)
             );
             if (isDuplicate) { continue; }
 
+            // Tag with workspace ID for cross-project isolation
+            const tags = this.workspaceId
+                ? [...fact.tags, `ws:${this.workspaceId}`]
+                : fact.tags;
+
             await this.dailyLog.addEntry({
                 content: fact.content,
                 type: fact.type,
-                tags: fact.tags,
+                tags,
                 importance: fact.importance,
                 source: 'auto-extracted',
             });
@@ -78,17 +91,65 @@ export class MemoryEngine {
         source: MemorySource = 'manual',
         layer: 'daily' | 'longterm' = 'longterm',
     ): Promise<MemoryEntry> {
-        // Tag workspace-scoped entries with workspaceId for cross-project isolation
-        if (this.workspaceId && tags.includes('workspace')) {
+        // Tag all entries with workspaceId for cross-project isolation
+        if (this.workspaceId && !tags.some(t => t.startsWith('ws:'))) {
             tags = [...tags, `ws:${this.workspaceId}`];
         }
+
+        // Deduplication: check if similar content already exists in the target layer
         if (layer === 'longterm') {
-            return this.longTermMemory.addEntry({ content, type, tags, importance, source });
+            const existing = await this.longTermMemory.getAll();
+            const duplicate = existing.find(e =>
+                e.content.toLowerCase() === content.toLowerCase() ||
+                this.isSimilar(e.content, content)
+            );
+            if (duplicate) {
+                // Merge: update importance to the higher value and refresh lastUsedAt
+                const merged = Math.max(duplicate.importance, importance);
+                await this.longTermMemory.updateImportance(duplicate.id, merged);
+                await this.longTermMemory.markUsed(duplicate.id);
+                return duplicate;
+            }
+            const newEntry = await this.longTermMemory.addEntry({ content, type, tags, importance, source });
+            // Post-write pass: decay importance of entries that the new entry supersedes
+            await this.decaySupersededEntries(newEntry, existing);
+            return newEntry;
         }
         return this.dailyLog.addEntry({ content, type, tags, importance, source });
     }
 
-    async searchMemory(keyword: string, layer: 'daily' | 'longterm' | 'all' = 'all'): Promise<MemoryEntry[]> {
+    /**
+     * After writing a new long-term entry, decay the importance of older entries
+     * that the new entry may supersede (same type + partial content overlap).
+     * This prevents stale decisions/conventions from outranking current ones.
+     */
+    private async decaySupersededEntries(newEntry: MemoryEntry, existingEntries: MemoryEntry[]): Promise<void> {
+        const supersedableTypes: MemoryEntryType[] = ['decision', 'convention', 'preference'];
+        if (!supersedableTypes.includes(newEntry.type)) { return; }
+
+        for (const old of existingEntries) {
+            if (old.id === newEntry.id || old.pinned) { continue; }
+            if (old.type !== newEntry.type) { continue; }
+
+            // Check if the new entry is about the same topic (partial word overlap > 40%)
+            const wordsNew = new Set(newEntry.content.toLowerCase().split(/\s+/).filter(w => w.length > 2));
+            const wordsOld = new Set(old.content.toLowerCase().split(/\s+/).filter(w => w.length > 2));
+            if (wordsOld.size === 0) { continue; }
+            let overlap = 0;
+            for (const w of wordsNew) {
+                if (wordsOld.has(w)) { overlap++; }
+            }
+            const overlapRatio = overlap / Math.min(wordsNew.size, wordsOld.size);
+
+            if (overlapRatio > 0.4) {
+                // The new entry likely supersedes the old one — decay its importance
+                const decayed = Math.max(0, old.importance - 0.2);
+                await this.longTermMemory.updateImportance(old.id, decayed);
+            }
+        }
+    }
+
+    async searchMemory(keyword: string, layer: 'daily' | 'longterm' | 'all' = 'all', skipWorkspaceFilter = false): Promise<MemoryEntry[]> {
         const results: MemoryEntry[] = [];
 
         if (layer === 'daily' || layer === 'all') {
@@ -101,14 +162,19 @@ export class MemoryEngine {
             results.push(...this.recaller.searchByKeyword(longtermEntries, keyword));
         }
 
-        // Filter workspace-scoped entries to current project only
-        if (this.workspaceId) {
-            return results.filter(e =>
-                !e.tags.some(t => t.startsWith('ws:')) ||
-                e.tags.includes(`ws:${this.workspaceId}`)
-            );
-        }
-        return results;
+        return skipWorkspaceFilter ? results : this.filterByWorkspace(results);
+    }
+
+    /**
+     * Filter entries to current workspace. Entries with no workspace tag pass through
+     * (legacy entries), entries tagged for a different workspace are excluded.
+     */
+    private filterByWorkspace(entries: MemoryEntry[]): MemoryEntry[] {
+        if (!this.workspaceId) { return entries; }
+        return entries.filter(e =>
+            !e.tags.some(t => t.startsWith('ws:')) ||
+            e.tags.includes(`ws:${this.workspaceId}`)
+        );
     }
 
     async getAllMemories(): Promise<{ daily: MemoryEntry[]; longterm: MemoryEntry[] }> {
@@ -116,7 +182,10 @@ export class MemoryEngine {
             this.dailyLog.getAllEntries(),
             this.longTermMemory.getAll(),
         ]);
-        return { daily, longterm };
+        return {
+            daily: this.filterByWorkspace(daily),
+            longterm: this.filterByWorkspace(longterm),
+        };
     }
 
     async promoteToLongTerm(entryId: string): Promise<boolean> {
@@ -141,11 +210,18 @@ export class MemoryEngine {
     }
 
     async clearDailyLogs(): Promise<void> {
-        // Read all daily logs and clear them - effectively a new day
-        const today = new Date().toISOString().split('T')[0];
-        const log = await this.dailyLog.readLog(today);
-        log.entries = [];
-        await this.dailyLog.writeLog(log);
+        await this.dailyLog.clearAll();
+    }
+
+    async clearLongTermMemory(): Promise<void> {
+        await this.longTermMemory.save({ entries: [] });
+    }
+
+    async clearAllMemory(): Promise<void> {
+        await Promise.all([
+            this.clearDailyLogs(),
+            this.clearLongTermMemory(),
+        ]);
     }
 
     async distill(token: vscode.CancellationToken): Promise<number> {
@@ -214,17 +290,14 @@ ${entriesText}`;
     }
 
     async getMemoryCount(): Promise<{ daily: number; longterm: number }> {
-        const [daily, longterm] = await Promise.all([
-            this.dailyLog.getAllEntries(),
-            this.longTermMemory.getAll(),
-        ]);
+        const { daily, longterm } = await this.getAllMemories();
         return { daily: daily.length, longterm: longterm.length };
     }
 
     /**
      * Simple similarity check: if two strings share >60% of their words, consider them similar.
      */
-    private isSimilar(a: string, b: string): boolean {
+    isSimilar(a: string, b: string): boolean {
         const wordsA = new Set(a.toLowerCase().split(/\s+/).filter(w => w.length > 2));
         const wordsB = new Set(b.toLowerCase().split(/\s+/).filter(w => w.length > 2));
         if (wordsA.size === 0 || wordsB.size === 0) { return false; }

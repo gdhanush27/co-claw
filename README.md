@@ -72,6 +72,9 @@ Type `@CoClaw` in the chat panel to start a conversation with memory-augmented r
 | `CoClaw.memory.dailyLogsRetentionDays` | `30` | Days to retain daily logs |
 | `CoClaw.memory.autoExtract` | `true` | Auto-extract facts from conversations |
 | `CoClaw.memory.tokenBudgetPercent` | `20` | Max % of context window for memory injection |
+| `CoClaw.memory.autoDistillThreshold` | `20` | Auto-distill when daily log reaches this many entries (0 to disable) |
+| `CoClaw.memory.autoDistillIntervalHours` | `24` | Auto-distill interval in hours (0 to disable) |
+| `CoClaw.memory.staleAfterDays` | `14` | Downgrade entries not referenced in this many days (0 to disable) |
 
 ## How Memory Works
 
@@ -93,5 +96,5 @@ All memories are stored locally in VS Code's global storage. No data is sent to 
 
 <p align="center">
   <img src="icon.png" alt="CoClaw" width="40" /><br/>
-  <sub>Built with ❤️ by <a href="https://github.com/gdhanush270">gdhanush270</a></sub>
+  <sub>Built with ❤️ by <a href="https://github.com/gdhanush27">gdhanush27</a></sub>
 </p>

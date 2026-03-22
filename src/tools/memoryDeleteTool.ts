@@ -1,9 +1,11 @@
 import * as vscode from 'vscode';
 import { MemoryEngine } from '../memory/MemoryEngine';
+import { MemoryLayer } from '../memory/types';
 
 interface MemoryDeleteInput {
     id?: string;
     query?: string;
+    layer?: MemoryLayer;
 }
 
 export class MemoryDeleteTool implements vscode.LanguageModelTool<MemoryDeleteInput> {
@@ -13,7 +15,29 @@ export class MemoryDeleteTool implements vscode.LanguageModelTool<MemoryDeleteIn
         options: vscode.LanguageModelToolInvocationOptions<MemoryDeleteInput>,
         _token: vscode.CancellationToken,
     ): Promise<vscode.LanguageModelToolResult> {
-        const { id, query } = options.input;
+        const { id, query, layer } = options.input;
+
+        // Bulk clear: layer specified without id or query
+        if (!id && !query && layer) {
+            if (layer === 'all') {
+                await this.memoryEngine.clearAllMemory();
+                return new vscode.LanguageModelToolResult([
+                    new vscode.LanguageModelTextPart('All memory cleared (daily logs and long-term memory).'),
+                ]);
+            }
+            if (layer === 'longterm') {
+                await this.memoryEngine.clearLongTermMemory();
+                return new vscode.LanguageModelToolResult([
+                    new vscode.LanguageModelTextPart('Long-term memory cleared.'),
+                ]);
+            }
+            if (layer === 'daily') {
+                await this.memoryEngine.clearDailyLogs();
+                return new vscode.LanguageModelToolResult([
+                    new vscode.LanguageModelTextPart('Daily memory logs cleared.'),
+                ]);
+            }
+        }
 
         // Delete by ID if provided
         if (id) {
@@ -28,9 +52,9 @@ export class MemoryDeleteTool implements vscode.LanguageModelTool<MemoryDeleteIn
             ]);
         }
 
-        // Search and delete by query
+        // Search and delete by query (skip workspace filter so cross-workspace entries are findable)
         if (query) {
-            const matches = await this.memoryEngine.searchMemory(query, 'all');
+            const matches = await this.memoryEngine.searchMemory(query, layer ?? 'all', true);
             if (matches.length === 0) {
                 return new vscode.LanguageModelToolResult([
                     new vscode.LanguageModelTextPart(`No memory entries matching "${query}" found.`),
@@ -54,7 +78,7 @@ export class MemoryDeleteTool implements vscode.LanguageModelTool<MemoryDeleteIn
         }
 
         return new vscode.LanguageModelToolResult([
-            new vscode.LanguageModelTextPart('Please provide either an "id" or a "query" to identify the memory to delete.'),
+            new vscode.LanguageModelTextPart('Please provide either an "id", a "query", or a "layer" to identify memory to delete.'),
         ]);
     }
 }

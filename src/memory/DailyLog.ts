@@ -110,6 +110,21 @@ export class DailyLog {
         return false;
     }
 
+    async clearAll(): Promise<void> {
+        const memoryDir = vscode.Uri.joinPath(this.storageUri, 'memory');
+        try {
+            const files = await vscode.workspace.fs.readDirectory(memoryDir);
+            for (const [name] of files) {
+                if (/^\d{4}-\d{2}-\d{2}\.json$/.test(name)) {
+                    const date = name.replace('.json', '');
+                    await this.writeLog({ date, entries: [] });
+                }
+            }
+        } catch {
+            // ignore
+        }
+    }
+
     async pruneOldLogs(retentionDays: number): Promise<void> {
         const memoryDir = vscode.Uri.joinPath(this.storageUri, 'memory');
         const cutoff = new Date();

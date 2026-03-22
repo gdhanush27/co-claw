@@ -18,6 +18,9 @@ import { registerShowMemoryCommand } from './commands/showMemory';
 import { registerClearMemoryCommand } from './commands/clearMemory';
 import { registerEditSoulCommand, registerEditProfileCommand } from './commands/editSoul';
 import { registerDistillCommand, registerImportCommand, registerExportCommand } from './commands/memoryCommands';
+import { registerLinkTelegramCommand, registerUnlinkTelegramCommand } from './commands/telegramCommands';
+import { TelegramBot } from './telegram/TelegramBot';
+import { TelegramConfig } from './telegram/TelegramConfig';
 import { createHash } from 'crypto';
 
 function getWorkspaceId(): string | undefined {
@@ -39,6 +42,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     // UI
     const statusBar = new StatusBar(modelManager);
+    statusBar.setMemoryEngine(memoryEngine);
     statusBar.update();
     context.subscriptions.push({ dispose: () => statusBar.dispose() });
 
@@ -68,6 +72,12 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.lm.registerTool('CoClaw_workspace_context', new WorkspaceContextTool()),
     );
 
+    // Telegram bot
+    const telegramConfig = new TelegramConfig(context.secrets, context.globalState);
+    const telegramBot = new TelegramBot(telegramConfig, modelManager, promptBuilder, memoryEngine, statusBar);
+    participantHandler.setTelegramBot(telegramBot);
+    context.subscriptions.push({ dispose: () => telegramBot.dispose() });
+
     // Commands
     context.subscriptions.push(
         registerSelectModelCommand(modelManager, statusBar),
@@ -78,6 +88,11 @@ export function activate(context: vscode.ExtensionContext) {
         registerDistillCommand(memoryEngine),
         registerImportCommand(memoryEngine),
         registerExportCommand(memoryEngine),
+        registerLinkTelegramCommand(telegramBot, telegramConfig),
+        registerUnlinkTelegramCommand(telegramBot, telegramConfig),
+        vscode.commands.registerCommand('CoClaw.openSettings', () => {
+            vscode.commands.executeCommand('workbench.action.openSettings', 'CoClaw');
+        }),
     );
 
     // Enable Settings Sync for model preference
@@ -89,8 +104,54 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Apply decay to long-term memory periodically
     memoryEngine.longTermMemory.applyDecay().catch(() => { /* silent */ });
+
+    // --- Auto-Distill Triggers ---
+    const autoDistillThreshold = vscode.workspace.getConfiguration('CoClaw.memory').get<number>('autoDistillThreshold', 20);
+    const autoDistillIntervalHours = vscode.workspace.getConfiguration('CoClaw.memory').get<number>('autoDistillIntervalHours', 24);
+
+    // Threshold-based: check after each extraction cycle via a periodic poll
+    let autoDistillTimer: ReturnType<typeof setInterval> | undefined;
+    if (autoDistillThreshold > 0) {
+        // Check every 5 minutes if threshold is exceeded
+        autoDistillTimer = setInterval(async () => {
+            try {
+                const todayEntries = await memoryEngine.dailyLog.getTodayEntries();
+                if (todayEntries.length >= autoDistillThreshold) {
+                    const tokenSource = new vscode.CancellationTokenSource();
+                    const count = await memoryEngine.distill(tokenSource.token);
+                    tokenSource.dispose();
+                    if (count > 0) {
+                        vscode.window.showInformationMessage(`CoClaw: Auto-distilled ${count} entries (threshold: ${autoDistillThreshold}).`);
+                    }
+                }
+            } catch { /* silent */ }
+        }, 5 * 60 * 1000);
+    }
+
+    // Scheduled: distill on a configurable interval
+    let scheduledDistillTimer: ReturnType<typeof setInterval> | undefined;
+    if (autoDistillIntervalHours > 0) {
+        scheduledDistillTimer = setInterval(async () => {
+            try {
+                const tokenSource = new vscode.CancellationTokenSource();
+                const count = await memoryEngine.distill(tokenSource.token);
+                tokenSource.dispose();
+                if (count > 0) {
+                    vscode.window.showInformationMessage(`CoClaw: Scheduled distill — ${count} entries consolidated.`);
+                }
+            } catch { /* silent */ }
+        }, autoDistillIntervalHours * 60 * 60 * 1000);
+    }
+
+    context.subscriptions.push({
+        dispose: () => {
+            if (autoDistillTimer) { clearInterval(autoDistillTimer); }
+            if (scheduledDistillTimer) { clearInterval(scheduledDistillTimer); }
+        }
+    });
 }
 
 export function deactivate() {
-    // Cleanup handled by disposables
+    // Note: VS Code disposes subscriptions automatically.
+    // Auto-distill timers disposed via subscriptions above.
 }

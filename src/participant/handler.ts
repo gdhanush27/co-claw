@@ -5,11 +5,19 @@ import { ToolRunner } from '../lm/ToolRunner';
 import { ToolResultCache } from '../lm/ToolResultCache';
 import { MemoryEngine } from '../memory/MemoryEngine';
 import { StatusBar } from '../ui/statusBar';
+import { TelegramBot } from '../telegram/TelegramBot';
 
 export class ParticipantHandler {
     private readonly toolRunner = new ToolRunner();
     private readonly cache: ToolResultCache;
     private activeCancellation: vscode.CancellationTokenSource | undefined;
+    private telegramBot: TelegramBot | undefined;
+
+    // Session-wide auto-approve tracking
+    private autoApproveCommand: string | undefined;
+    private autoApproveConfigSection: string | undefined;
+    private autoApproveConfigKey: string | undefined;
+    private previousAutoApprove: boolean | undefined;
 
     constructor(
         private readonly modelManager: ModelManager,
@@ -19,6 +27,10 @@ export class ParticipantHandler {
     ) {
         this.cache = new ToolResultCache(memoryEngine);
         this.toolRunner.setCache(this.cache);
+    }
+
+    setTelegramBot(bot: TelegramBot): void {
+        this.telegramBot = bot;
     }
 
     /**
@@ -166,6 +178,8 @@ export class ParticipantHandler {
                 return this.handleClearCommand(stream);
             case 'soul':
                 return this.handleSoulCommand(stream);
+            case 'auto':
+                return this.handleAutoCommand(request, stream, token);
             default:
                 stream.markdown(`Unknown command: /${request.command}`);
                 return {};
@@ -230,6 +244,151 @@ export class ParticipantHandler {
         stream.markdown('Use `CoClaw: Edit Identity (SOUL)` command to edit the assistant persona.');
         await vscode.commands.executeCommand('CoClaw.editSoul');
         return {};
+    }
+
+    private async handleAutoCommand(
+        request: vscode.ChatRequest,
+        stream: vscode.ChatResponseStream,
+        token: vscode.CancellationToken,
+    ): Promise<vscode.ChatResult> {
+        if (!this.telegramBot) {
+            stream.markdown('Telegram bot is not initialized. Please restart the extension.');
+            return {};
+        }
+
+        if (this.telegramBot.isRunning) {
+            stream.markdown('⚠️ Telegram bridge is already running. Send `/stop` in Telegram or unlink via command palette to stop it.');
+            return {};
+        }
+
+        // ── Grant session permissions BEFORE starting the bot ──────
+        const granted = await this.requestSessionPermissions(stream);
+        if (!granted) {
+            stream.markdown('\n❌ **Telegram mode requires full access to work remotely.** Run `/auto` again when ready.');
+            return {};
+        }
+
+        try {
+            stream.markdown('🚀 **Starting Telegram bridge...**\n\n');
+            await this.telegramBot.start(stream, request.toolInvocationToken);
+
+            // Race: either the bot stops naturally (via /stop in Telegram)
+            // or VS Code cancels the chat response (stop button).
+            const stoppedPromise = this.telegramBot.stoppedPromise ?? Promise.resolve();
+            const cancelPromise = new Promise<void>((resolve) => {
+                token.onCancellationRequested(() => {
+                    this.telegramBot?.stop();
+                    resolve();
+                });
+            });
+
+            await Promise.race([stoppedPromise, cancelPromise]);
+
+            // Revert session permissions
+            await this.revertSessionPermissions();
+
+            stream.markdown('\n\n🛑 **Telegram bridge stopped.** Session permissions reverted.');
+        } catch (err) {
+            await this.revertSessionPermissions();
+            const msg = err instanceof Error ? err.message : String(err);
+            stream.markdown(`❌ Failed to start Telegram bot: ${msg}\n\nMake sure you have linked your Telegram bot first using **CoClaw: Link Telegram Bot** from the command palette.`);
+        }
+
+        return {};
+    }
+
+    /**
+     * Ask the user once for full session permissions (terminal, sensitive files, etc.)
+     * and enable auto-approve so no dialogs appear during the Telegram session.
+     */
+    private async requestSessionPermissions(stream: vscode.ChatResponseStream): Promise<boolean> {
+        const choice = await vscode.window.showWarningMessage(
+            'CoClaw Telegram Mode needs full access for this session:\n'
+            + '• Edit any file (including .env, configs)\n'
+            + '• Run terminal commands\n'
+            + '• Use all available tools\n\n'
+            + 'Grant all permissions? (Reverted when /auto stops)',
+            { modal: true },
+            'Allow All for Session',
+        );
+
+        if (choice !== 'Allow All for Session') {
+            return false;
+        }
+
+        stream.markdown('🔓 **Session permissions granted** — all tool calls will be auto-approved.\n\n');
+
+        // Discover the correct auto-approve command/setting at runtime
+        const allCommands = await vscode.commands.getCommands(true);
+        const autoApproveCmd = allCommands.find(
+            (c) => /auto.?approve/i.test(c) && /chat|agent/i.test(c),
+        );
+
+        if (autoApproveCmd) {
+            try {
+                await vscode.commands.executeCommand(autoApproveCmd);
+                this.autoApproveCommand = autoApproveCmd;
+                stream.markdown(`✅ Auto-approve enabled via \`${autoApproveCmd}\`\n\n`);
+                return true;
+            } catch {
+                // Command existed but failed — fall through to config approach
+            }
+        }
+
+        // Fallback: try known configuration keys
+        const configKeys = [
+            { section: 'chat', key: 'agent.autoApprove' },
+            { section: 'github.copilot.chat', key: 'agent.autoApprove' },
+            { section: 'chat', key: 'autoApprove' },
+        ];
+
+        for (const { section, key } of configKeys) {
+            try {
+                const config = vscode.workspace.getConfiguration(section);
+                const current = config.get<boolean>(key);
+                if (current !== undefined || config.inspect(key)?.defaultValue !== undefined) {
+                    this.previousAutoApprove = current;
+                    this.autoApproveConfigSection = section;
+                    this.autoApproveConfigKey = key;
+                    await config.update(key, true, vscode.ConfigurationTarget.Global);
+                    stream.markdown(`✅ Auto-approve enabled via setting \`${section}.${key}\`\n\n`);
+                    return true;
+                }
+            } catch {
+                // This key doesn't exist, try next
+            }
+        }
+
+        // Neither worked — tell user how to enable manually
+        stream.markdown(
+            '⚠️ *Could not enable auto-approve automatically.*\n\n'
+            + '**To enable manually:** Open the Copilot chat input area and click the '
+            + '**auto-approve toggle** (shield icon) before sending Telegram prompts.\n\n',
+        );
+
+        return true;
+    }
+
+    /**
+     * Revert the auto-approve permissions after the Telegram session ends.
+     */
+    private async revertSessionPermissions(): Promise<void> {
+        try {
+            if (this.autoApproveCommand) {
+                // Toggle it back off using the same command
+                await vscode.commands.executeCommand(this.autoApproveCommand);
+                this.autoApproveCommand = undefined;
+            }
+            if (this.autoApproveConfigSection && this.autoApproveConfigKey) {
+                const config = vscode.workspace.getConfiguration(this.autoApproveConfigSection);
+                await config.update(this.autoApproveConfigKey, this.previousAutoApprove, vscode.ConfigurationTarget.Global);
+                this.autoApproveConfigSection = undefined;
+                this.autoApproveConfigKey = undefined;
+                this.previousAutoApprove = undefined;
+            }
+        } catch {
+            // Silent — don't crash on cleanup
+        }
     }
 
     private estimateTokens(text: string): number {
