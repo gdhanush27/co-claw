@@ -161,18 +161,6 @@ export class TelegramBot {
                 for (const update of updates) {
                     if (!this.polling) { break; }
                     offset = update.update_id + 1;
-
-                    // Handle callback queries (inline button presses)
-                    if (update.callback_query) {
-                        const cb = update.callback_query;
-                        if (cb.from.id !== authorizedUserId) {
-                            await this.api!.answerCallbackQuery(cb.id, '⛔ Unauthorized');
-                            continue;
-                        }
-                        await this.handleCallbackQuery(cb);
-                        continue;
-                    }
-
                     await this.handleUpdate(update, authorizedUserId);
                 }
             } catch (err) {
@@ -252,63 +240,6 @@ export class TelegramBot {
         await this.processPrompt(chatId, text);
     }
 
-    // ── Callback Queries (inline buttons) ─────────────────────────
-
-    private async handleCallbackQuery(cb: TelegramCallbackQuery): Promise<void> {
-        const chatId = cb.message?.chat.id;
-        const messageId = cb.message?.message_id;
-
-        if (cb.data === 'approve_dialog') {
-            await this.api!.answerCallbackQuery(cb.id, '✅ Approving...');
-
-            // Try multiple approaches to auto-accept pending VS Code dialogs/notifications
-            const approveCommands = [
-                // Accept the focused notification action
-                'notification.acceptPrimaryAction',
-                // Focus and manage notifications
-                'notifications.focusFirstToast',
-                'notification.accept',
-                // Accept in quick input / inline chat
-                'workbench.action.quickInputAccept',
-            ];
-
-            for (const cmd of approveCommands) {
-                try {
-                    await vscode.commands.executeCommand(cmd);
-                    // Small delay between attempts to let UI update
-                    await new Promise(r => setTimeout(r, 200));
-                } catch { /* command may not exist — that's fine */ }
-            }
-
-            if (chatId && messageId) {
-                await this.api!.editMessageText(chatId, messageId,
-                    '✅ Approve signal sent to VS Code.'
-                ).catch(() => {});
-            }
-
-            this.vscodeStream?.markdown(`> *(Telegram user tapped Approve)*\n\n`);
-        } else if (cb.data === 'deny_dialog') {
-            await this.api!.answerCallbackQuery(cb.id, '❌ Denied');
-
-            // Try to dismiss/cancel the pending dialog
-            try {
-                await vscode.commands.executeCommand('notifications.focusFirstToast');
-                await new Promise(r => setTimeout(r, 200));
-                await vscode.commands.executeCommand('notification.dismiss');
-            } catch { /* silent */ }
-
-            if (chatId && messageId) {
-                await this.api!.editMessageText(chatId, messageId,
-                    '❌ Denied — dialog dismissed.'
-                ).catch(() => {});
-            }
-
-            this.vscodeStream?.markdown(`> *(Telegram user tapped Deny)*\n\n`);
-        } else {
-            await this.api!.answerCallbackQuery(cb.id);
-        }
-    }
-
     // ── LLM Pipeline ─────────────────────────────────────────────
 
     private async processPrompt(chatId: number, prompt: string): Promise<void> {
@@ -342,24 +273,10 @@ export class TelegramBot {
             const tokenSource = new vscode.CancellationTokenSource();
             const token = tokenSource.token;
 
-            // Keep sending "typing" while we process, and send
-            // inline approval buttons if VS Code is likely showing a dialog.
-            let approvalMsgId: number | undefined;
+            // Keep sending "typing" while we process
             const typingInterval = setInterval(() => {
                 this.api?.sendChatAction(chatId, 'typing').catch(() => {});
             }, 4000);
-            const pendingDialogTimer = setTimeout(async () => {
-                try {
-                    const result = await this.api!.sendMessageWithButtons(chatId,
-                        '⏳ VS Code may be waiting for approval (sensitive file edit, terminal command).\n\nTap Approve to auto-accept, or check VS Code manually.',
-                        [[
-                            { text: '✅ Approve', callback_data: 'approve_dialog' },
-                            { text: '❌ Deny', callback_data: 'deny_dialog' },
-                        ]],
-                    );
-                    approvalMsgId = result.message_id;
-                } catch { /* silent */ }
-            }, 10000);
 
             let responseText: string;
             try {
@@ -379,13 +296,7 @@ export class TelegramBot {
                 );
             } finally {
                 clearInterval(typingInterval);
-                clearTimeout(pendingDialogTimer);
                 tokenSource.dispose();
-            }
-
-            // Clean up the approval message if it was sent
-            if (approvalMsgId) {
-                await this.api!.editMessageText(chatId, approvalMsgId, '✅ Completed — no pending approvals.').catch(() => {});
             }
 
             // Update conversation history

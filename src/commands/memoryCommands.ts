@@ -6,8 +6,13 @@ export function registerDistillCommand(memoryEngine: MemoryEngine): vscode.Dispo
         const tokenSource = new vscode.CancellationTokenSource();
         try {
             const count = await memoryEngine.distill(tokenSource.token);
+            // Auto-dedup after distill to clean up any duplicates
+            const removed = await memoryEngine.deduplicateLongTerm();
             if (count > 0) {
-                vscode.window.showInformationMessage(`CoClaw: Distilled ${count} entries into long-term memory.`);
+                const msg = removed > 0
+                    ? `CoClaw: Distilled ${count} entries into long-term memory (removed ${removed} duplicates).`
+                    : `CoClaw: Distilled ${count} entries into long-term memory.`;
+                vscode.window.showInformationMessage(msg);
             } else {
                 vscode.window.showInformationMessage('CoClaw: No entries to distill.');
             }
@@ -89,6 +94,21 @@ export function registerExportCommand(memoryEngine: MemoryEngine): vscode.Dispos
             vscode.window.showInformationMessage(`CoClaw: Exported ${allEntries.length} memories.`);
         } catch (e) {
             vscode.window.showErrorMessage(`CoClaw: Failed to export — ${e instanceof Error ? e.message : String(e)}`);
+        }
+    });
+}
+
+export function registerDeduplicateCommand(memoryEngine: MemoryEngine): vscode.Disposable {
+    return vscode.commands.registerCommand('CoClaw.deduplicateMemory', async () => {
+        const [longtermRemoved, dailyRemoved] = await Promise.all([
+            memoryEngine.deduplicateLongTerm(),
+            memoryEngine.deduplicateDaily(),
+        ]);
+        const total = longtermRemoved + dailyRemoved;
+        if (total > 0) {
+            vscode.window.showInformationMessage(`CoClaw: Removed ${total} duplicate memories (${longtermRemoved} long-term, ${dailyRemoved} daily).`);
+        } else {
+            vscode.window.showInformationMessage('CoClaw: No duplicates found.');
         }
     });
 }

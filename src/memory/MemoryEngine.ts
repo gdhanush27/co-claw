@@ -96,10 +96,14 @@ export class MemoryEngine {
             tags = [...tags, `ws:${this.workspaceId}`];
         }
 
-        // Deduplication: check if similar content already exists in the target layer
+        // Deduplication: check if similar content already exists
+        const [existingLongterm, todayEntries] = await Promise.all([
+            this.longTermMemory.getAll(),
+            this.dailyLog.getTodayEntries(),
+        ]);
+
         if (layer === 'longterm') {
-            const existing = await this.longTermMemory.getAll();
-            const duplicate = existing.find(e =>
+            const duplicate = existingLongterm.find(e =>
                 e.content.toLowerCase() === content.toLowerCase() ||
                 this.isSimilar(e.content, content)
             );
@@ -112,8 +116,23 @@ export class MemoryEngine {
             }
             const newEntry = await this.longTermMemory.addEntry({ content, type, tags, importance, source });
             // Post-write pass: decay importance of entries that the new entry supersedes
-            await this.decaySupersededEntries(newEntry, existing);
+            await this.decaySupersededEntries(newEntry, existingLongterm);
             return newEntry;
+        }
+
+        // Daily layer: also check for duplicates in today's entries and long-term
+        const allExisting = [...todayEntries, ...existingLongterm];
+        const dailyDuplicate = allExisting.some(e =>
+            e.content.toLowerCase() === content.toLowerCase() ||
+            this.isSimilar(e.content, content)
+        );
+        if (dailyDuplicate) {
+            // Return the existing entry rather than creating a duplicate
+            const match = allExisting.find(e =>
+                e.content.toLowerCase() === content.toLowerCase() ||
+                this.isSimilar(e.content, content)
+            )!;
+            return match;
         }
         return this.dailyLog.addEntry({ content, type, tags, importance, source });
     }
@@ -194,6 +213,18 @@ export class MemoryEngine {
         const entry = allDaily.find(e => e.id === entryId);
         if (!entry) { return false; }
 
+        // Dedup: check if similar entry already exists in long-term
+        const existingLongterm = await this.longTermMemory.getAll();
+        const duplicate = existingLongterm.find(e =>
+            e.content.toLowerCase() === entry.content.toLowerCase() ||
+            this.isSimilar(e.content, entry.content)
+        );
+        if (duplicate) {
+            // Already in long-term — just remove from daily
+            await this.dailyLog.deleteEntry(entryId);
+            return true;
+        }
+
         // Add to longterm
         const promoted: MemoryEntry = { ...entry, source: 'manual', lastUsedAt: Date.now() };
         await this.longTermMemory.addEntryDirect(promoted);
@@ -259,15 +290,25 @@ ${entriesText}`;
             if (!Array.isArray(parsed)) { return 0; }
 
             let count = 0;
+            const existingLongterm = await this.longTermMemory.getAll();
             for (const item of parsed) {
                 if (typeof item.content === 'string' && typeof item.type === 'string') {
-                    await this.longTermMemory.addEntry({
+                    // Dedup: skip if similar entry already exists in long-term memory
+                    const isDuplicate = existingLongterm.some(e =>
+                        e.content.toLowerCase() === item.content.toLowerCase() ||
+                        this.isSimilar(e.content, item.content)
+                    );
+                    if (isDuplicate) { continue; }
+
+                    const newEntry = await this.longTermMemory.addEntry({
                         content: item.content,
                         type: item.type,
                         tags: Array.isArray(item.tags) ? item.tags : [],
                         importance: typeof item.importance === 'number' ? item.importance : 0.5,
                         source: 'distilled',
                     });
+                    // Track newly added entries so subsequent iterations also check against them
+                    existingLongterm.push(newEntry);
                     count++;
                 }
             }
@@ -306,6 +347,60 @@ ${entriesText}`;
             if (wordsB.has(w)) { overlap++; }
         }
         const smaller = Math.min(wordsA.size, wordsB.size);
-        return overlap / smaller > 0.6;
+        return overlap / smaller > 0.5;
     }
-}
+    /**
+     * Remove duplicate entries from long-term memory.
+     * Keeps the entry with the highest importance; removes others that are
+     * exact matches or pass the isSimilar check.
+     */
+    async deduplicateLongTerm(): Promise<number> {
+        const entries = await this.longTermMemory.getAll();
+        const toDelete: Set<string> = new Set();
+
+        for (let i = 0; i < entries.length; i++) {
+            if (toDelete.has(entries[i].id)) { continue; }
+            for (let j = i + 1; j < entries.length; j++) {
+                if (toDelete.has(entries[j].id)) { continue; }
+                const a = entries[i];
+                const b = entries[j];
+                if (a.content.toLowerCase() === b.content.toLowerCase() ||
+                    this.isSimilar(a.content, b.content)) {
+                    // Keep the one with higher importance (or the older one on tie)
+                    const loser = a.importance >= b.importance ? b : a;
+                    toDelete.add(loser.id);
+                    // If we're discarding entry[i], break inner loop
+                    if (loser.id === a.id) { break; }
+                }
+            }
+        }
+
+        for (const id of toDelete) {
+            await this.longTermMemory.deleteEntry(id);
+        }
+        return toDelete.size;
+    }
+
+    /**
+     * Remove duplicate entries from daily logs (today only).
+     */
+    async deduplicateDaily(): Promise<number> {
+        const entries = await this.dailyLog.getTodayEntries();
+        const toDelete: Set<string> = new Set();
+
+        for (let i = 0; i < entries.length; i++) {
+            if (toDelete.has(entries[i].id)) { continue; }
+            for (let j = i + 1; j < entries.length; j++) {
+                if (toDelete.has(entries[j].id)) { continue; }
+                if (entries[i].content.toLowerCase() === entries[j].content.toLowerCase() ||
+                    this.isSimilar(entries[i].content, entries[j].content)) {
+                    toDelete.add(entries[j].id);
+                }
+            }
+        }
+
+        for (const id of toDelete) {
+            await this.dailyLog.deleteEntry(id);
+        }
+        return toDelete.size;
+    }}

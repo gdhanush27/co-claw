@@ -17,7 +17,7 @@ import { registerSelectModelCommand } from './commands/selectModel';
 import { registerShowMemoryCommand } from './commands/showMemory';
 import { registerClearMemoryCommand } from './commands/clearMemory';
 import { registerEditSoulCommand, registerEditProfileCommand } from './commands/editSoul';
-import { registerDistillCommand, registerImportCommand, registerExportCommand } from './commands/memoryCommands';
+import { registerDistillCommand, registerImportCommand, registerExportCommand, registerDeduplicateCommand } from './commands/memoryCommands';
 import { registerLinkTelegramCommand, registerUnlinkTelegramCommand } from './commands/telegramCommands';
 import { TelegramBot } from './telegram/TelegramBot';
 import { TelegramConfig } from './telegram/TelegramConfig';
@@ -88,6 +88,7 @@ export function activate(context: vscode.ExtensionContext) {
         registerDistillCommand(memoryEngine),
         registerImportCommand(memoryEngine),
         registerExportCommand(memoryEngine),
+        registerDeduplicateCommand(memoryEngine),
         registerLinkTelegramCommand(telegramBot, telegramConfig),
         registerUnlinkTelegramCommand(telegramBot, telegramConfig),
         vscode.commands.registerCommand('CoClaw.openSettings', () => {

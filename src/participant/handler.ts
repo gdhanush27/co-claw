@@ -13,12 +13,6 @@ export class ParticipantHandler {
     private activeCancellation: vscode.CancellationTokenSource | undefined;
     private telegramBot: TelegramBot | undefined;
 
-    // Session-wide auto-approve tracking
-    private autoApproveCommand: string | undefined;
-    private autoApproveConfigSection: string | undefined;
-    private autoApproveConfigKey: string | undefined;
-    private previousAutoApprove: boolean | undefined;
-
     constructor(
         private readonly modelManager: ModelManager,
         private readonly promptBuilder: PromptBuilder,
@@ -261,19 +255,10 @@ export class ParticipantHandler {
             return {};
         }
 
-        // ── Grant session permissions BEFORE starting the bot ──────
-        const granted = await this.requestSessionPermissions(stream);
-        if (!granted) {
-            stream.markdown('\n❌ **Telegram mode requires full access to work remotely.** Run `/auto` again when ready.');
-            return {};
-        }
-
         try {
             stream.markdown('🚀 **Starting Telegram bridge...**\n\n');
             await this.telegramBot.start(stream, request.toolInvocationToken);
 
-            // Race: either the bot stops naturally (via /stop in Telegram)
-            // or VS Code cancels the chat response (stop button).
             const stoppedPromise = this.telegramBot.stoppedPromise ?? Promise.resolve();
             const cancelPromise = new Promise<void>((resolve) => {
                 token.onCancellationRequested(() => {
@@ -284,111 +269,13 @@ export class ParticipantHandler {
 
             await Promise.race([stoppedPromise, cancelPromise]);
 
-            // Revert session permissions
-            await this.revertSessionPermissions();
-
-            stream.markdown('\n\n🛑 **Telegram bridge stopped.** Session permissions reverted.');
+            stream.markdown('\n\n🛑 **Telegram bridge stopped.**');
         } catch (err) {
-            await this.revertSessionPermissions();
             const msg = err instanceof Error ? err.message : String(err);
-            stream.markdown(`❌ Failed to start Telegram bot: ${msg}\n\nMake sure you have linked your Telegram bot first using **CoClaw: Link Telegram Bot** from the command palette.`);
+            stream.markdown(`❌ Failed to start Telegram bot: ${msg}\n\nMake sure you have linked your bot first using **CoClaw: Link Telegram Bot**.`);
         }
 
         return {};
-    }
-
-    /**
-     * Ask the user once for full session permissions (terminal, sensitive files, etc.)
-     * and enable auto-approve so no dialogs appear during the Telegram session.
-     */
-    private async requestSessionPermissions(stream: vscode.ChatResponseStream): Promise<boolean> {
-        const choice = await vscode.window.showWarningMessage(
-            'CoClaw Telegram Mode needs full access for this session:\n'
-            + '• Edit any file (including .env, configs)\n'
-            + '• Run terminal commands\n'
-            + '• Use all available tools\n\n'
-            + 'Grant all permissions? (Reverted when /auto stops)',
-            { modal: true },
-            'Allow All for Session',
-        );
-
-        if (choice !== 'Allow All for Session') {
-            return false;
-        }
-
-        stream.markdown('🔓 **Session permissions granted** — all tool calls will be auto-approved.\n\n');
-
-        // Discover the correct auto-approve command/setting at runtime
-        const allCommands = await vscode.commands.getCommands(true);
-        const autoApproveCmd = allCommands.find(
-            (c) => /auto.?approve/i.test(c) && /chat|agent/i.test(c),
-        );
-
-        if (autoApproveCmd) {
-            try {
-                await vscode.commands.executeCommand(autoApproveCmd);
-                this.autoApproveCommand = autoApproveCmd;
-                stream.markdown(`✅ Auto-approve enabled via \`${autoApproveCmd}\`\n\n`);
-                return true;
-            } catch {
-                // Command existed but failed — fall through to config approach
-            }
-        }
-
-        // Fallback: try known configuration keys
-        const configKeys = [
-            { section: 'chat', key: 'agent.autoApprove' },
-            { section: 'github.copilot.chat', key: 'agent.autoApprove' },
-            { section: 'chat', key: 'autoApprove' },
-        ];
-
-        for (const { section, key } of configKeys) {
-            try {
-                const config = vscode.workspace.getConfiguration(section);
-                const current = config.get<boolean>(key);
-                if (current !== undefined || config.inspect(key)?.defaultValue !== undefined) {
-                    this.previousAutoApprove = current;
-                    this.autoApproveConfigSection = section;
-                    this.autoApproveConfigKey = key;
-                    await config.update(key, true, vscode.ConfigurationTarget.Global);
-                    stream.markdown(`✅ Auto-approve enabled via setting \`${section}.${key}\`\n\n`);
-                    return true;
-                }
-            } catch {
-                // This key doesn't exist, try next
-            }
-        }
-
-        // Neither worked — tell user how to enable manually
-        stream.markdown(
-            '⚠️ *Could not enable auto-approve automatically.*\n\n'
-            + '**To enable manually:** Open the Copilot chat input area and click the '
-            + '**auto-approve toggle** (shield icon) before sending Telegram prompts.\n\n',
-        );
-
-        return true;
-    }
-
-    /**
-     * Revert the auto-approve permissions after the Telegram session ends.
-     */
-    private async revertSessionPermissions(): Promise<void> {
-        try {
-            if (this.autoApproveCommand) {
-                // Toggle it back off using the same command
-                await vscode.commands.executeCommand(this.autoApproveCommand);
-                this.autoApproveCommand = undefined;
-            }
-            if (this.autoApproveConfigSection && this.autoApproveConfigKey) {
-                const config = vscode.workspace.getConfiguration(this.autoApproveConfigSection);
-                await config.update(this.autoApproveConfigKey, this.previousAutoApprove, vscode.ConfigurationTarget.Global);
-                this.autoApproveConfigSection = undefined;
-                this.autoApproveConfigKey = undefined;
-                this.previousAutoApprove = undefined;
-            }
-        } catch {
-            // Silent — don't crash on cleanup
-        }
     }
 
     private estimateTokens(text: string): number {

@@ -235,6 +235,10 @@
         "title": "CoClaw: Export Memories"
       },
       {
+        "command": "CoClaw.deduplicateMemory",
+        "title": "CoClaw: Deduplicate Memory"
+      },
+      {
         "command": "CoClaw.stop",
         "title": "CoClaw: Stop Response",
         "icon": "$(debug-stop)"

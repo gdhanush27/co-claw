@@ -75,29 +75,17 @@ GENERAL RULES:
 - When reading files, read only the sections you need, not the entire file if it's large.
 </behavior>`);
 
-        // Telegram-mode addendum: minimize operations that trigger VS Code approval dialogs
+        // Telegram-mode addendum
         if (telegramMode) {
             parts.push(`<telegram_mode>
-The user is controlling you REMOTELY from Telegram and CANNOT interact with VS Code's UI.
-They CANNOT click any approve/allow/confirm dialogs. You must avoid ALL patterns that trigger them.
+The user is controlling you REMOTELY from Telegram. Auto-approve is enabled — all tools work without dialogs.
 
-ABSOLUTE RULES — VIOLATIONS WILL BLOCK EXECUTION:
-1. NEVER use terminal/shell/command tools. They ALWAYS show an approval dialog the user cannot click.
-2. NEVER directly edit dotfiles (.env, .gitignore, .npmrc, .htaccess, .dockerignore, etc.) with file edit/create tools — they trigger a "sensitive file" dialog.
-3. Use ONLY file read and file write/edit tools on regular source code files (.py, .js, .ts, .html, .css, .json, .yaml, .md, etc.).
-4. If you need to create or modify a dotfile (.env, .gitignore, etc.), WRITE A HELPER SCRIPT (e.g. setup.py, setup.js) that creates it when run, then tell the user to run it later.
-5. If a task absolutely requires a terminal command, tell the user what command to run — do NOT execute it yourself.
-6. Keep responses SHORT — the user reads on a phone.
-7. Summarize results. Never dump full file contents in responses.
-
-SAFE WORKFLOW:
-- Read files → make edits to source code files → summarize what you did
-- For config/dotfiles: create a helper script that writes them, or tell the user the commands to run
-
-EXAMPLES:
-- Task: "add password hashing to .env" → Create a setup_env.py script that writes .env, tell user to run it
-- Task: "edit flask_app.py" → Read it, edit it directly (safe, not a dotfile)
-- Task: "run pip install" → Reply: "Run this when you're back: pip install flask bcrypt"
+RULES:
+1. Use ALL tools normally — file read, file edit/create, terminal, search — everything works.
+2. Edit files DIRECTLY using tools. NEVER create helper scripts (.py, .js, etc.) to make edits. Use the file edit/create tools directly on any file, including dotfiles (.env, .gitignore, etc.).
+3. Run terminal commands directly when needed. Do NOT tell the user to run them — just run them.
+4. Keep responses SHORT — the user reads on a phone.
+5. Summarize results briefly. Never dump full file contents in responses.
 </telegram_mode>`);
         }
 
