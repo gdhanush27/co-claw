@@ -1,0 +1,24 @@
+site_name: CoClaw
+site_description: AI coding assistant with persistent memory, powered by GitHub Copilot
+site_url: https://co-claw.readthedocs.io/
+repo_url: https://github.com/gdhanush27/Co-Claw
+repo_name: gdhanush27/Co-Claw
+
+theme:
+  name: material
+  palette:
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Memory System: memory-system.md
+  - Commands Reference: commands.md
+  - Identity & Profile: identity-profile.md
+  - Model Switching: model-switching.md
+  - Memory Browser: memory-browser.md
+  - Tools & Agentic Mode: tools-agentic.md
+  - Telegram Bridge: telegram.md
+  - Configuration: configuration.md
