@@ -21,6 +21,12 @@ CoClaw adds a persistent memory layer to GitHub Copilot through the VS Code Lang
 - **Import/Export** - Backup and restore memories as JSON
 - **Telegram Bridge** - Control CoClaw remotely from Telegram
 
+### Telegram Chat Demo
+
+https://github.com/user-attachments/assets/6d7bb303-7e22-4ca3-9a23-2f0f4d7b0e37
+
+[▶ Click the link if the above video doesn't work](https://youtu.be/rRH_7dtXpb0)
+
 ## Requirements
 
 - VS Code `1.93+`
