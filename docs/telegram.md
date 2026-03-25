@@ -34,6 +34,12 @@ In Copilot Chat, type:
 
 CoClaw begins polling your Telegram bot for messages. You'll see a confirmation in the chat.
 
+To start the full persistent mode with heartbeat and cron support, use:
+
+```
+@CoClaw /open
+```
+
 ## Telegram Commands
 
 Once the bridge is running, send these commands to your bot on Telegram:
@@ -45,6 +51,12 @@ Once the bridge is running, send these commands to your bot on Telegram:
 | `/status` | Show active model, memory counts, tool count, and conversation turns |
 | `/clear` | Clear the Telegram conversation history |
 | `/memory` | Show memory summary (top 15 long-term, top 10 daily entries) |
+| `/cron` | Open the Telegram cron control panel with pause, resume, delete, refresh, and clear-all buttons |
+| `/cron add <schedule> <name> | <prompt>` | Create a cron job from Telegram |
+| `/cron delete <name or id>` | Delete cron jobs by exact name or by job id |
+| `/cron pause <name or id>` | Pause a cron job |
+| `/cron resume <name or id>` | Resume a paused cron job |
+| `/heartbeat` | Force a heartbeat check in `/open` mode |
 | `/help` | List all available commands |
 | *Any other text* | Processed as a full agentic request with all tools available |
 
@@ -79,6 +91,40 @@ The Telegram session maintains its own conversation history (up to 20 turns / 40
 - Long responses are automatically split at the 4,096-character Telegram limit.
 - A **typing indicator** is shown while CoClaw processes your request.
 - Only messages from your authorized User ID are processed — all others are ignored.
+
+## Formatting
+
+Telegram replies now render a Telegram-safe subset of the markdown CoClaw produces.
+
+- Bold text such as `**important**` is rendered as bold.
+- Italic text such as `*note*` or `_note_` is rendered as italic.
+- Inline code and fenced code blocks are rendered as code.
+- Markdown headings are rendered as bold lines.
+- Markdown links are preserved as clickable links.
+- Unordered list markers like `- item` and `* item` are rendered as bullet points.
+
+Formatting is normalized before sending so Telegram can render it reliably. If a markdown pattern is not safely supported, CoClaw falls back to readable plain text instead of sending a malformed message.
+
+## Cron Control Panel
+
+In `/open` mode, send `/cron` to open a button-driven cron control panel directly in Telegram.
+
+- Pause or resume a job with one tap.
+- Delete a specific job from the panel.
+- Refresh the panel after changes.
+- Clear all cron jobs with a confirmation prompt.
+- Each job entry shows its job ID for precise text-based commands when needed.
+
+If you prefer text commands, `/cron delete`, `/cron pause`, and `/cron resume` also accept job ids from the control panel.
+
+Natural-language requests like "delete the drink water reminder" are also intercepted when CoClaw can confidently map them to cron operations. When the request is ambiguous, CoClaw will ask for a more exact name or a job id instead of claiming it succeeded.
+
+## VS Code Cron Commands
+
+These Command Palette commands are useful when you want to manage cron storage directly from VS Code:
+
+- **CoClaw: Clear All Cron Jobs** — Remove all persisted cron jobs from VS Code storage.
+- **CoClaw: Open Cron Storage** — Open the cron storage folder in your OS file explorer.
 
 ## Stopping the Bridge
 

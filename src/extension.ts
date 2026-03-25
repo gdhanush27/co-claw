@@ -18,7 +18,12 @@ import { registerShowMemoryCommand } from './commands/showMemory';
 import { registerClearMemoryCommand } from './commands/clearMemory';
 import { registerEditSoulCommand, registerEditProfileCommand } from './commands/editSoul';
 import { registerDistillCommand, registerImportCommand, registerExportCommand, registerDeduplicateCommand } from './commands/memoryCommands';
-import { registerLinkTelegramCommand, registerUnlinkTelegramCommand } from './commands/telegramCommands';
+import {
+    registerClearAllCronJobsCommand,
+    registerLinkTelegramCommand,
+    registerOpenCronStorageCommand,
+    registerUnlinkTelegramCommand,
+} from './commands/telegramCommands';
 import { TelegramBot } from './telegram/TelegramBot';
 import { TelegramConfig } from './telegram/TelegramConfig';
 import { createHash } from 'crypto';
@@ -74,7 +79,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Telegram bot
     const telegramConfig = new TelegramConfig(context.secrets, context.globalState);
-    const telegramBot = new TelegramBot(telegramConfig, modelManager, promptBuilder, memoryEngine, statusBar);
+    const telegramBot = new TelegramBot(telegramConfig, modelManager, promptBuilder, memoryEngine, statusBar, storageUri);
     participantHandler.setTelegramBot(telegramBot);
     context.subscriptions.push({ dispose: () => telegramBot.dispose() });
 
@@ -91,6 +96,8 @@ export function activate(context: vscode.ExtensionContext) {
         registerDeduplicateCommand(memoryEngine),
         registerLinkTelegramCommand(telegramBot, telegramConfig),
         registerUnlinkTelegramCommand(telegramBot, telegramConfig),
+        registerClearAllCronJobsCommand(telegramBot),
+        registerOpenCronStorageCommand(telegramBot),
         vscode.commands.registerCommand('CoClaw.openSettings', () => {
             vscode.commands.executeCommand('workbench.action.openSettings', 'CoClaw');
         }),

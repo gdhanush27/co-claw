@@ -63,6 +63,23 @@ Starts the Telegram polling bridge. CoClaw begins listening for messages from yo
 
 Requires a linked Telegram bot. See [Telegram Bridge](telegram.md) for setup instructions.
 
+### `/open` — Start OpenClaw Mode
+
+Starts OpenClaw mode, which extends the Telegram bridge with:
+
+- Workspace-backed `MEMORY.md` integration
+- Daily logs in the workspace
+- Heartbeat checks
+- Cron job support
+
+**Usage:**
+
+```
+@CoClaw /open
+```
+
+Use this mode when you want a more persistent, proactive Telegram workflow.
+
 ## Command Palette Commands
 
 Open the Command Palette with `Ctrl+Shift+P` and type the command name.
@@ -130,6 +147,14 @@ After linking, use `/auto` in chat to start the bridge. See [Telegram Bridge](te
 ### CoClaw: Unlink Telegram Bot
 
 Shows a confirmation dialog, then stops the bot and removes stored credentials.
+
+### CoClaw: Clear All Cron Jobs
+
+Removes all persisted cron jobs from VS Code storage. If OpenClaw mode is currently running, active in-memory cron jobs are also cleared immediately.
+
+### CoClaw: Open Cron Storage
+
+Opens the persisted cron storage folder in your operating system's file explorer. Useful for debugging or manual inspection.
 
 ### CoClaw: Open Settings
 

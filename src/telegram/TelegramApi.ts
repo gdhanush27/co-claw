@@ -1,4 +1,6 @@
 import * as https from 'https';
+import { formatTelegramHtml, splitTelegramHtml, TelegramParseMode } from './TelegramFormatting';
+import { TelegramInlineKeyboard } from './TelegramCronUi';
 
 export interface TelegramUser {
     id: number;
@@ -36,6 +38,7 @@ interface TelegramApiResponse<T> {
 
 const TELEGRAM_API = 'api.telegram.org';
 const MAX_MESSAGE_LENGTH = 4096;
+const SPLIT_LABEL_RESERVE = 24;
 
 /**
  * Lightweight Telegram Bot API client using built-in https.
@@ -75,9 +78,9 @@ export class TelegramApi {
         }
     }
 
-    /** Send a text message. Automatically splits long messages with continuation markers. */
-    async sendMessage(chatId: number, text: string, parseMode?: 'Markdown' | 'HTML'): Promise<void> {
-        const chunks = this.splitMessage(text);
+    /** Send a text message. Automatically formats HTML messages and splits long payloads safely. */
+    async sendMessage(chatId: number, text: string, parseMode: TelegramParseMode = 'HTML'): Promise<void> {
+        const chunks = this.prepareChunks(text, parseMode);
         for (let i = 0; i < chunks.length; i++) {
             let chunk = chunks[i];
             // Add continuation markers when a message is split
@@ -89,9 +92,7 @@ export class TelegramApi {
                 chat_id: chatId,
                 text: chunk,
             };
-            if (parseMode) {
-                params.parse_mode = parseMode;
-            }
+            params.parse_mode = parseMode;
             await this.request('sendMessage', params);
         }
     }
@@ -108,11 +109,12 @@ export class TelegramApi {
     async sendMessageWithButtons(
         chatId: number,
         text: string,
-        buttons: { text: string; callback_data: string }[][],
+        buttons: TelegramInlineKeyboard,
     ): Promise<{ message_id: number }> {
         const params = {
             chat_id: chatId,
-            text,
+            text: this.prepareText(text, 'HTML'),
+            parse_mode: 'HTML',
             reply_markup: { inline_keyboard: buttons },
         };
         return this.request<{ message_id: number }>('sendMessage', params);
@@ -126,29 +128,53 @@ export class TelegramApi {
     }
 
     /** Edit a sent message's text (e.g. to update after button press). */
-    async editMessageText(chatId: number, messageId: number, text: string): Promise<void> {
-        await this.request('editMessageText', {
+    async editMessageText(
+        chatId: number,
+        messageId: number,
+        text: string,
+        parseMode: TelegramParseMode = 'HTML',
+        buttons?: TelegramInlineKeyboard,
+    ): Promise<void> {
+        const params: Record<string, unknown> = {
             chat_id: chatId,
             message_id: messageId,
-            text,
-        });
+            text: this.prepareText(text, parseMode),
+            parse_mode: parseMode,
+        };
+        if (buttons) {
+            params.reply_markup = { inline_keyboard: buttons };
+        }
+        await this.request('editMessageText', params);
     }
 
-    private splitMessage(text: string): string[] {
-        if (text.length <= MAX_MESSAGE_LENGTH) {
+    private prepareChunks(text: string, parseMode: TelegramParseMode): string[] {
+        if (parseMode === 'HTML') {
+            return splitTelegramHtml(this.prepareText(text, parseMode), MAX_MESSAGE_LENGTH - SPLIT_LABEL_RESERVE);
+        }
+        return this.splitPlainText(text, MAX_MESSAGE_LENGTH - SPLIT_LABEL_RESERVE);
+    }
+
+    private prepareText(text: string, parseMode: TelegramParseMode): string {
+        if (parseMode === 'HTML') {
+            return formatTelegramHtml(text);
+        }
+        return text;
+    }
+
+    private splitPlainText(text: string, maxLength: number): string[] {
+        if (text.length <= maxLength) {
             return [text];
         }
         const chunks: string[] = [];
         let remaining = text;
         while (remaining.length > 0) {
-            if (remaining.length <= MAX_MESSAGE_LENGTH) {
+            if (remaining.length <= maxLength) {
                 chunks.push(remaining);
                 break;
             }
-            // Try to split at a newline
-            let splitIdx = remaining.lastIndexOf('\n', MAX_MESSAGE_LENGTH);
+            let splitIdx = remaining.lastIndexOf('\n', maxLength);
             if (splitIdx <= 0) {
-                splitIdx = MAX_MESSAGE_LENGTH;
+                splitIdx = maxLength;
             }
             chunks.push(remaining.substring(0, splitIdx));
             remaining = remaining.substring(splitIdx).trimStart();

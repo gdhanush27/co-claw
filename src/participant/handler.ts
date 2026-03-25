@@ -174,6 +174,8 @@ export class ParticipantHandler {
                 return this.handleSoulCommand(stream);
             case 'auto':
                 return this.handleAutoCommand(request, stream, token);
+            case 'open':
+                return this.handleOpenCommand(request, stream, token);
             default:
                 stream.markdown(`Unknown command: /${request.command}`);
                 return {};
@@ -273,6 +275,58 @@ export class ParticipantHandler {
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             stream.markdown(`❌ Failed to start Telegram bot: ${msg}\n\nMake sure you have linked your bot first using **CoClaw: Link Telegram Bot**.`);
+        }
+
+        return {};
+    }
+
+    private async handleOpenCommand(
+        request: vscode.ChatRequest,
+        stream: vscode.ChatResponseStream,
+        token: vscode.CancellationToken,
+    ): Promise<vscode.ChatResult> {
+        if (!this.telegramBot) {
+            stream.markdown('Telegram bot is not initialized. Please restart the extension.');
+            return {};
+        }
+
+        if (this.telegramBot.isRunning) {
+            if (this.telegramBot.isOpenMode) {
+                stream.markdown('⚠️ **OpenClaw mode is already running.** Send `/stop` in Telegram to stop it.');
+            } else {
+                stream.markdown('⚠️ Telegram bridge is already running in `/auto` mode. Send `/stop` in Telegram first, then use `/open`.');
+            }
+            return {};
+        }
+
+        // Check workspace
+        const folders = vscode.workspace.workspaceFolders;
+        if (!folders || folders.length === 0) {
+            stream.markdown('❌ No workspace folder open. `/open` requires a workspace to operate on.');
+            return {};
+        }
+
+        try {
+            stream.markdown('🦞 **Starting OpenClaw mode...**\n\n');
+            stream.markdown(`Workspace: \`${folders[0].name}\`\n\n`);
+
+            // Start in openMode=true
+            await this.telegramBot.start(stream, request.toolInvocationToken, true);
+
+            const stoppedPromise = this.telegramBot.stoppedPromise ?? Promise.resolve();
+            const cancelPromise = new Promise<void>((resolve) => {
+                token.onCancellationRequested(() => {
+                    this.telegramBot?.stop();
+                    resolve();
+                });
+            });
+
+            await Promise.race([stoppedPromise, cancelPromise]);
+
+            stream.markdown('\n\n🛑 **OpenClaw mode stopped.**');
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            stream.markdown(`❌ Failed to start OpenClaw mode: ${msg}\n\nMake sure you have linked your bot first using **CoClaw: Link Telegram Bot**.`);
         }
 
         return {};

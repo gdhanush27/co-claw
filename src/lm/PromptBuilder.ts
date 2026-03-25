@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { MemoryEngine } from '../memory/MemoryEngine';
+import { WorkspaceMemory } from '../memory/WorkspaceMemory';
 import { SoulConfig } from '../profile/SoulConfig';
 import { UserProfile } from '../profile/UserProfile';
 import { MemorySearchResult } from '../memory/types';
@@ -11,7 +12,7 @@ export class PromptBuilder {
         private readonly userProfile: UserProfile,
     ) {}
 
-    async build(userMessage: string, model: vscode.LanguageModelChat, telegramMode = false): Promise<string> {
+    async build(userMessage: string, model: vscode.LanguageModelChat, telegramMode = false, openMode = false): Promise<string> {
         const soul = await this.soulConfig.load();
         const user = await this.userProfile.load();
 
@@ -24,7 +25,13 @@ export class PromptBuilder {
         // Also get workspace context entries (cached file structures, search results)
         const workspaceContext = await this.memoryEngine.searchMemory('workspace', 'all');
 
-        return this.assemblePrompt(soul, user, relevantMemories, workspaceContext, telegramMode);
+        // In /open mode, also load workspace-based MEMORY.md + daily logs
+        let workspaceMemoryContext = '';
+        if (openMode) {
+            workspaceMemoryContext = await WorkspaceMemory.buildMemoryContext();
+        }
+
+        return this.assemblePrompt(soul, user, relevantMemories, workspaceContext, telegramMode, openMode, workspaceMemoryContext);
     }
 
     private assemblePrompt(
@@ -33,6 +40,8 @@ export class PromptBuilder {
         memories: MemorySearchResult[],
         workspaceContext: import('../memory/types').MemoryEntry[],
         telegramMode = false,
+        openMode = false,
+        workspaceMemoryContext = '',
     ): string {
         const parts: string[] = [];
 
@@ -87,6 +96,48 @@ RULES:
 4. Keep responses SHORT — the user reads on a phone.
 5. Summarize results briefly. Never dump full file contents in responses.
 </telegram_mode>`);
+        }
+
+        // OpenClaw /open mode addendum
+        if (openMode) {
+            parts.push(`<open_mode>
+You are running in OpenClaw mode (/open). This means:
+- You are a PERSISTENT, PROACTIVE agent connected via Telegram
+- You have access to workspace-based MEMORY.md and daily logs (memory/YYYY-MM-DD.md)
+- A heartbeat system periodically checks HEARTBEAT.md and may notify the user proactively
+- MEMORY.md is automatically updated after each conversation with important facts (preferences, decisions, conventions)
+- You can also EXPLICITLY write to MEMORY.md using file tools when the user says "remember this" or you discover something important
+- Daily logs (memory/YYYY-MM-DD.md) are automatically appended with conversation summaries
+- You can ONLY access files within the current workspace folder
+- Think of yourself as a colleague who works alongside the user, not just a chatbot
+
+CRON JOBS — You can schedule tasks! When the user asks you to:
+- Do something later ("remind me in 20 minutes", "check the build in 1 hour")
+- Set up a recurring task ("every morning at 7am summarize my inbox")
+- Schedule any delayed or periodic work
+
+Respond with a CRON_PROPOSAL block like this:
+\`\`\`cron
+SCHEDULE: <cron expression or relative time like 20m, 1h>
+NAME: <short descriptive name>
+PROMPT: <the task prompt for the scheduled job>
+\`\`\`
+
+The system will parse this and ask the user for Y/N confirmation before creating the job.
+Do NOT use /cron commands directly — use the CRON_PROPOSAL format above so the user can confirm.
+For existing cron jobs, do NOT claim you deleted, paused, resumed, or listed them unless the system command path confirmed it. If cron management is ambiguous, ask the user to use /cron list and a specific job id.
+
+Examples of schedules:
+- "20m" or "1h" or "2h30m" = one-shot timer (auto-deletes after running)
+- "0 7 * * *" = every day at 7:00 AM
+- "0 */2 * * *" = every 2 hours
+- "30 9 * * 1-5" = weekdays at 9:30 AM
+</open_mode>`);
+        }
+
+        // Workspace-based memory (MEMORY.md + daily logs) — injected in /open mode
+        if (workspaceMemoryContext) {
+            parts.push(workspaceMemoryContext);
         }
 
         // User preferences

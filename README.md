@@ -8,18 +8,20 @@ AI coding assistant with persistent memory, powered by GitHub Copilot.
 
 ---
 
-CoClaw adds a persistent memory layer to GitHub Copilot through the VS Code Language Model API. It stores and recalls relevant context across sessions (preferences, code conventions, patterns, and decisions) and injects it into prompts automatically.
+CoClaw adds a persistent memory layer to GitHub Copilot through the VS Code Language Model API. It stores and recalls relevant context across sessions, injects that context into future prompts, and can also run remotely through Telegram with full tool access.
 
 ## Features
 
-- **Persistent Memory** - Two-layer memory (daily logs + long-term memory)
-- **Automatic Extraction** - Captures facts, decisions, and preferences from conversations
-- **Agentic Coding** - Uses VS Code tools to read/edit/search within workspace boundaries
-- **Memory Browser** - Inspect, edit, promote, and delete memory entries
-- **Model Switching** - Choose available Copilot models from the status bar
-- **Identity + Profile** - Customize assistant persona (`SOUL.json`) and user preferences (`USER.json`)
-- **Import/Export** - Backup and restore memories as JSON
-- **Telegram Bridge** - Control CoClaw remotely from Telegram
+- **Persistent Memory** - Two-layer memory with daily logs and long-term storage
+- **Automatic Extraction** - Captures facts, conventions, preferences, and decisions from conversations
+- **Agentic Coding** - Uses VS Code tools to read, edit, search, and inspect the workspace
+- **Memory Browser** - Inspect, edit, promote, and delete stored memory entries
+- **Model Switching** - Choose available Copilot models from the status bar or command palette
+- **Identity + Profile** - Customize assistant persona with `SOUL.json` and user preferences with `USER.json`
+- **Telegram Bridge** - Control CoClaw remotely from Telegram with full tool access
+- **OpenClaw Mode** - Persistent `/open` mode with workspace memory, heartbeat checks, and cron jobs
+- **Telegram Formatting** - Telegram replies render a safe subset of markdown including bold, italics, links, and code blocks
+- **Telegram Cron UI** - Manage cron jobs from Telegram with inline buttons for pause, resume, delete, refresh, and clear-all
 
 ### Telegram Chat Demo
 
@@ -32,13 +34,16 @@ https://github.com/user-attachments/assets/6d7bb303-7e22-4ca3-9a23-2f0f4d7b0e37
 - VS Code `1.93+`
 - GitHub Copilot Chat extension (`github.copilot-chat`)
 
-## Usage
+## Quick Start
 
-### Chat
+1. Install the extension in VS Code.
+2. Open Copilot Chat and send `@CoClaw` followed by your request.
+3. CoClaw starts remembering useful context automatically.
+4. Optionally link Telegram with `CoClaw: Link Telegram Bot` for remote access.
 
-Use `@CoClaw` in Copilot Chat for memory-augmented responses.
+## Chat Commands
 
-### Slash Commands
+Use these in Copilot Chat with `@CoClaw /command`.
 
 | Command | Description |
 |---|---|
@@ -46,15 +51,16 @@ Use `@CoClaw` in Copilot Chat for memory-augmented responses.
 | `/distill` | Distill recent logs into long-term memory |
 | `/clear` | Clear session memory |
 | `/soul` | Edit CoClaw identity and behavior |
-| `/auto` | Start Telegram bridge for remote control |
+| `/auto` | Start the Telegram bridge for remote control |
+| `/open` | Start OpenClaw mode with Telegram bridge, workspace memory, heartbeat, and cron support |
 
-### Command Palette
+## Command Palette
 
 | Command | Description |
 |---|---|
 | `CoClaw: Select Model` | Switch Copilot model |
-| `CoClaw: Browse Memory` | Open memory browser |
-| `CoClaw: Clear Session Memory` | Clear today’s daily log |
+| `CoClaw: Browse Memory` | Open the memory browser |
+| `CoClaw: Clear Session Memory` | Clear memory for the current session |
 | `CoClaw: Edit Identity (SOUL)` | Open `SOUL.json` |
 | `CoClaw: Edit Profile (USER)` | Open `USER.json` |
 | `CoClaw: Distill to Long-Term Memory` | Distill daily logs |
@@ -64,7 +70,19 @@ Use `@CoClaw` in Copilot Chat for memory-augmented responses.
 | `CoClaw: Stop Response` | Stop the active CoClaw response |
 | `CoClaw: Link Telegram Bot` | Link your Telegram bot |
 | `CoClaw: Unlink Telegram Bot` | Remove Telegram link |
+| `CoClaw: Clear All Cron Jobs` | Remove all persisted cron jobs from VS Code storage |
+| `CoClaw: Open Cron Storage` | Open the cron storage folder in your OS file explorer |
 | `CoClaw: Open Settings` | Open CoClaw settings |
+
+## Telegram Highlights
+
+- `/auto` starts the remote Telegram bridge
+- `/open` starts OpenClaw mode with heartbeat and cron job support
+- `/cron` opens a Telegram button-based cron control panel
+- Telegram replies render a Telegram-safe subset of markdown
+- Natural-language cron deletion requests are intercepted before the LLM path when possible
+
+For full setup and remote usage details, see [docs/telegram.md](docs/telegram.md).
 
 ## Settings
 
@@ -72,20 +90,24 @@ Use `@CoClaw` in Copilot Chat for memory-augmented responses.
 |---|---|---|
 | `CoClaw.model.family` | `""` | Preferred Copilot model family |
 | `CoClaw.memory.maxLongTermEntries` | `100` | Max long-term entries |
-| `CoClaw.memory.dailyLogsRetentionDays` | `30` | Daily log retention (days) |
+| `CoClaw.memory.dailyLogsRetentionDays` | `30` | Daily log retention in days |
 | `CoClaw.memory.autoExtract` | `true` | Auto-extract conversation facts |
-| `CoClaw.memory.tokenBudgetPercent` | `20` | Max context % for memory injection |
+| `CoClaw.memory.tokenBudgetPercent` | `20` | Max context percentage for memory injection |
 | `CoClaw.memory.autoDistillThreshold` | `20` | Auto-distill when daily log reaches this count (`0` disables) |
 | `CoClaw.memory.autoDistillIntervalHours` | `24` | Auto-distill interval in hours (`0` disables) |
 | `CoClaw.memory.staleAfterDays` | `14` | Reduce ranking weight for stale memories (`0` disables) |
+| `CoClaw.heartbeat.enabled` | `true` | Enable heartbeat checks in `/open` mode |
+| `CoClaw.heartbeat.intervalMinutes` | `30` | Heartbeat interval in minutes |
+| `CoClaw.heartbeat.activeHoursStart` | `08:00` | Start of active hours for heartbeat |
+| `CoClaw.heartbeat.activeHoursEnd` | `22:00` | End of active hours for heartbeat |
 
-## How Memory Works
+## Documentation
 
-1. **Recall:** CoClaw ranks relevant memories and injects them into prompt context.
-2. **Extraction:** After each response, it extracts facts/preferences/decisions.
-3. **Daily Logs:** Extracted items are saved per day.
-4. **Distillation:** Daily logs are compressed into curated long-term memory.
-5. **Reuse:** Long-term memory is reused across future sessions.
+- [docs/getting-started.md](docs/getting-started.md)
+- [docs/commands.md](docs/commands.md)
+- [docs/memory-system.md](docs/memory-system.md)
+- [docs/telegram.md](docs/telegram.md)
+- [docs/configuration.md](docs/configuration.md)
 
 ## Privacy
 

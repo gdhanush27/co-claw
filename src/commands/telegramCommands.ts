@@ -90,3 +90,36 @@ export function registerUnlinkTelegramCommand(
         vscode.window.showInformationMessage('Telegram bot has been unlinked.');
     });
 }
+
+export function registerClearAllCronJobsCommand(bot: TelegramBot): vscode.Disposable {
+    return vscode.commands.registerCommand('CoClaw.clearCronJobs', async () => {
+        const action = await vscode.window.showWarningMessage(
+            'Clear all saved cron jobs? This removes scheduled jobs from VS Code storage.',
+            { modal: true },
+            'Clear All',
+        );
+        if (action !== 'Clear All') { return; }
+
+        const removed = await bot.clearAllCronJobs();
+        const suffix = removed === 1 ? 'job' : 'jobs';
+        vscode.window.showInformationMessage(`CoClaw: Cleared ${removed} cron ${suffix}.`);
+    });
+}
+
+export function registerOpenCronStorageCommand(bot: TelegramBot): vscode.Disposable {
+    return vscode.commands.registerCommand('CoClaw.openCronStorage', async () => {
+        const cronStorageUri = bot.getCronStorageUri();
+        if (!cronStorageUri) {
+            vscode.window.showErrorMessage('CoClaw: Cron storage is not available yet.');
+            return;
+        }
+
+        try {
+            await vscode.workspace.fs.createDirectory(cronStorageUri);
+        } catch {
+            // Directory may already exist.
+        }
+
+        await vscode.commands.executeCommand('revealFileInOS', cronStorageUri);
+    });
+}
