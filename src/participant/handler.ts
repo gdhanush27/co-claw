@@ -6,6 +6,7 @@ import { ToolResultCache } from '../lm/ToolResultCache';
 import { MemoryEngine } from '../memory/MemoryEngine';
 import { StatusBar } from '../ui/statusBar';
 import { TelegramBot } from '../telegram/TelegramBot';
+import { Orchestrator } from '../agents/Orchestrator';
 
 export class ParticipantHandler {
     private readonly toolRunner = new ToolRunner();
@@ -18,6 +19,7 @@ export class ParticipantHandler {
         private readonly promptBuilder: PromptBuilder,
         private readonly memoryEngine: MemoryEngine,
         private readonly statusBar?: StatusBar,
+        private readonly orchestrator?: Orchestrator,
     ) {
         this.cache = new ToolResultCache(memoryEngine);
         this.toolRunner.setCache(this.cache);
@@ -52,6 +54,12 @@ export class ParticipantHandler {
         // Handle slash commands
         if (request.command) {
             return this.handleCommand(request, context, stream, token);
+        }
+
+        // 'always' mode: route every non-command prompt through the orchestrator
+        const agentsMode = vscode.workspace.getConfiguration('CoClaw.agents').get<string>('mode', 'slash');
+        if (agentsMode === 'always' && this.orchestrator) {
+            return this.runOrchestrator(request, stream, token);
         }
 
         try {
@@ -176,6 +184,8 @@ export class ParticipantHandler {
                 return this.handleAutoCommand(request, stream, token);
             case 'open':
                 return this.handleOpenCommand(request, stream, token);
+            case 'agents':
+                return this.runOrchestrator(request, stream, token);
             default:
                 stream.markdown(`Unknown command: /${request.command}`);
                 return {};
@@ -242,6 +252,39 @@ export class ParticipantHandler {
         return {};
     }
 
+    private async runOrchestrator(
+        request: vscode.ChatRequest,
+        stream: vscode.ChatResponseStream,
+        token: vscode.CancellationToken,
+    ): Promise<vscode.ChatResult> {
+        const mode = vscode.workspace.getConfiguration('CoClaw.agents').get<string>('mode', 'slash');
+        if (mode === 'off') {
+            stream.markdown('Multi-agent orchestration is disabled. Set `CoClaw.agents.mode` to `slash` or `always` to enable.');
+            return {};
+        }
+        if (!this.orchestrator) {
+            stream.markdown('Orchestrator is not initialized.');
+            return {};
+        }
+
+        // Cancel any prior in-flight response and link cancellation
+        this.stop();
+        this.activeCancellation = new vscode.CancellationTokenSource();
+        const linkedToken = this.activeCancellation.token;
+        const chatCancelListener = token.onCancellationRequested(() => this.stop());
+        this.statusBar?.setBusy(true);
+
+        try {
+            await this.orchestrator.run(request.prompt, stream, linkedToken, request.toolInvocationToken);
+        } finally {
+            chatCancelListener.dispose();
+            this.activeCancellation?.dispose();
+            this.activeCancellation = undefined;
+            this.statusBar?.setBusy(false);
+        }
+        return {};
+    }
+
     private async handleAutoCommand(
         request: vscode.ChatRequest,
         stream: vscode.ChatResponseStream,
@@ -258,6 +301,7 @@ export class ParticipantHandler {
         }
 
         try {
+            stream.markdown('⚠️ **Deprecation notice:** `/auto` will be removed in version **1.0.0**. Please use `/open` instead.\n\n');
             stream.markdown('🚀 **Starting Telegram bridge...**\n\n');
             await this.telegramBot.start(stream, request.toolInvocationToken);
 

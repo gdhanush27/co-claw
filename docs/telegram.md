@@ -51,6 +51,7 @@ Once the bridge is running, send these commands to your bot on Telegram:
 | `/status` | Show active model, memory counts, tool count, and conversation turns |
 | `/clear` | Clear the Telegram conversation history |
 | `/memory` | Show memory summary (top 15 long-term, top 10 daily entries) |
+| `/settings` (or `/s`) | Open the interactive settings panel — toggle/edit any CoClaw setting from inline buttons |
 | `/cron` | Open the Telegram cron control panel with pause, resume, delete, refresh, and clear-all buttons |
 | `/cron add <schedule> <name> | <prompt>` | Create a cron job from Telegram |
 | `/cron delete <name or id>` | Delete cron jobs by exact name or by job id |
@@ -68,8 +69,36 @@ When you send a regular message (not a command), CoClaw processes it exactly lik
 - Run terminal commands
 - Search the codebase
 - Read and write memories
+- Send workspace files to Telegram via the `CoClaw_telegram_send_file` tool (just ask: *"send me the package.json"*)
 
-In Telegram mode, tools are auto-approved (no confirmation dialogs), making it ideal for remote coding.
+In Telegram mode, tools are auto-approved (no confirmation dialogs), making it ideal for remote coding. Tools that require an interactive VS Code prompt (Simple Browser, Live Preview, screenshot, webview, etc.) are filtered out automatically since you can't answer their dialogs from Telegram.
+
+## Streamed Replies
+
+Prose generated between tool calls is delivered as separate Telegram messages instead of one giant blob at the end. Each chunk arrives as soon as the model produces it, so long agentic runs feel conversational instead of silent.
+
+## Tone & Emojis
+
+In `/open` mode the assistant adopts a configurable tone. Switch via `/settings` → Telegram → Tone, or via VS Code settings (`CoClaw.telegram.tone`):
+
+- `sarcastic` (default) — dry one-liner, then the real answer
+- `friendly` — warm, conversational
+- `professional` — concise and businesslike
+- `playful` — enthusiastic with extra emojis
+- `neutral` — plain (no tone addendum)
+
+`CoClaw.telegram.useEmojis` is the master switch — turning it off removes emojis from replies AND disables incoming-message reactions. `CoClaw.telegram.sarcasticReactions` separately controls whether each user message gets a sarcastic emoji reaction in `/open` mode (it also requires `useEmojis`).
+
+## Settings Panel
+
+Send `/settings` (or `/s`) to open an interactive panel with inline buttons. Settings are grouped into Agents, Memory, Heartbeat, Telegram, and Model. Each entry supports the right input style:
+
+- **Booleans** — on/off toggle
+- **Enums** — one button per allowed value
+- **Numbers** — `−step` / `+step` / `Min` / `Max` / `⌨ Type` for an exact value
+- **Strings** — `⌨ Type` / `🗑 Clear`
+
+All changes are written to global VS Code settings.
 
 ## Dual Output
 

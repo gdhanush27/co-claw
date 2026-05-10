@@ -53,6 +53,8 @@ Opens the `SOUL.json` file for in-line editing of CoClaw's identity and behavior
 
 ### `/auto` — Start Telegram Bridge
 
+> **⚠️ Deprecated:** `/auto` will be removed in version **1.0.0**. Use [`/open`](#open--start-openclaw-mode) instead.
+
 Starts the Telegram polling bridge. CoClaw begins listening for messages from your linked Telegram bot and processes them with full tool access.
 
 **Usage:**
@@ -79,6 +81,18 @@ Starts OpenClaw mode, which extends the Telegram bridge with:
 ```
 
 Use this mode when you want a more persistent, proactive Telegram workflow.
+
+### `/agents` — Multi-Agent Orchestration
+
+Runs your task through the multi-agent orchestrator. A Planner produces a JSON DAG of subtasks, the Coder agent (or several in parallel) implements them, the Reviewer reads the result, the Tester adds tests, and the Memory agent persists facts. Coder tasks are auto-fanned out across multiple parallel agents based on file paths and concern lanes (frontend / backend / data / tests / docs / etc.).
+
+**Usage:**
+
+```
+@CoClaw /agents Build a login page with API and tests
+```
+
+Live progress is shown in the **Agents** sidebar (the CoClaw activity bar icon). Tune fan-out width with `CoClaw.agents.maxParallelCoders` and switch modes with `CoClaw.agents.mode` (`off`, `slash`, `always`).
 
 ## Command Palette Commands
 

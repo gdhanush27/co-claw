@@ -127,6 +127,24 @@ export class TelegramApi {
         await this.request('answerCallbackQuery', params);
     }
 
+    /**
+     * Set an emoji reaction on a message. Bot API 7.0+.
+     * Pass undefined to clear reactions.
+     */
+    async setMessageReaction(chatId: number, messageId: number, emoji?: string): Promise<void> {
+        const params: Record<string, unknown> = {
+            chat_id: chatId,
+            message_id: messageId,
+            reaction: emoji ? [{ type: 'emoji', emoji }] : [],
+            is_big: false,
+        };
+        try {
+            await this.request('setMessageReaction', params);
+        } catch {
+            // Reactions are best-effort: some chats / older clients reject them.
+        }
+    }
+
     /** Edit a sent message's text (e.g. to update after button press). */
     async editMessageText(
         chatId: number,
@@ -239,6 +257,71 @@ export class TelegramApi {
             }
 
             req.write(postData);
+            req.end();
+        });
+    }
+
+    /**
+     * Send a file (document) to a chat. Uses multipart/form-data so the file
+     * is uploaded directly — no public URL needed. Best-effort: throws on hard
+     * network/API errors so the caller can surface them.
+     */
+    async sendDocument(chatId: number, fileName: string, content: Buffer, caption?: string): Promise<void> {
+        const boundary = `----CoClawBoundary${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+        const fields: Array<{ name: string; value: string }> = [
+            { name: 'chat_id', value: String(chatId) },
+        ];
+        if (caption) {
+            fields.push({ name: 'caption', value: caption.slice(0, 1000) });
+            fields.push({ name: 'parse_mode', value: 'HTML' });
+        }
+
+        const parts: Buffer[] = [];
+        for (const f of fields) {
+            parts.push(Buffer.from(
+                `--${boundary}\r\n` +
+                `Content-Disposition: form-data; name="${f.name}"\r\n\r\n` +
+                `${f.value}\r\n`
+            ));
+        }
+        // Sanitize filename for Content-Disposition header
+        const safeName = fileName.replace(/[\r\n"]/g, '_').slice(0, 200) || 'file.bin';
+        parts.push(Buffer.from(
+            `--${boundary}\r\n` +
+            `Content-Disposition: form-data; name="document"; filename="${safeName}"\r\n` +
+            `Content-Type: application/octet-stream\r\n\r\n`
+        ));
+        parts.push(content);
+        parts.push(Buffer.from(`\r\n--${boundary}--\r\n`));
+        const body = Buffer.concat(parts);
+
+        await new Promise<void>((resolve, reject) => {
+            const options: https.RequestOptions = {
+                hostname: TELEGRAM_API,
+                path: `${this.baseUrl}/sendDocument`,
+                method: 'POST',
+                headers: {
+                    'Content-Type': `multipart/form-data; boundary=${boundary}`,
+                    'Content-Length': body.length,
+                },
+                timeout: 60000,
+            };
+            const req = https.request(options, (res) => {
+                let data = '';
+                res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
+                res.on('end', () => {
+                    try {
+                        const parsed: TelegramApiResponse<unknown> = JSON.parse(data);
+                        if (parsed.ok) { resolve(); }
+                        else { reject(new Error(`Telegram sendDocument error: ${parsed.description ?? 'unknown'}`)); }
+                    } catch {
+                        reject(new Error(`Failed to parse sendDocument response: ${data.substring(0, 200)}`));
+                    }
+                });
+            });
+            req.on('error', reject);
+            req.on('timeout', () => { req.destroy(); reject(new Error('sendDocument timed out')); });
+            req.write(body);
             req.end();
         });
     }

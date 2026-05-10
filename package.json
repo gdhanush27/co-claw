@@ -2,7 +2,7 @@
   "name": "CoClaw",
   "displayName": "CoClaw",
   "description": "AI coding assistant with persistent memory, powered by GitHub Copilot",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "publisher": "gdhanush270",
   "license": "Apache-2.0",
   "icon": "icon.png",
@@ -66,6 +66,10 @@
           {
             "name": "open",
             "description": "Start OpenClaw mode — Telegram bridge + Heartbeat + workspace memory (full autonomous agent)"
+          },
+          {
+            "name": "agents",
+            "description": "Run a multi-agent orchestration: Planner decomposes the task, Coder/Reviewer/Tester/Memory agents execute in parallel"
           }
         ]
       }
@@ -202,6 +206,75 @@
         "inputSchema": {
           "type": "object",
           "properties": {}
+        }
+      },
+      {
+        "name": "CoClaw_shared_memory_read",
+        "displayName": "Read Shared Memory",
+        "modelDescription": "Read shared key/value entries written by sibling agents in the current multi-agent run. Filter by runId and optionally a specific key.",
+        "inputSchema": {
+          "type": "object",
+          "required": ["runId"],
+          "properties": {
+            "runId": {"type": "string", "description": "The orchestration run id (provided in your system prompt)"},
+            "key": {"type": "string", "description": "Optional specific key to fetch"}
+          }
+        }
+      },
+      {
+        "name": "CoClaw_shared_memory_write",
+        "displayName": "Write Shared Memory",
+        "modelDescription": "Write a key/value entry to the shared memory store for the current multi-agent run so dependent agents can read it.",
+        "inputSchema": {
+          "type": "object",
+          "required": ["runId", "key", "value"],
+          "properties": {
+            "runId": {"type": "string", "description": "The orchestration run id"},
+            "key": {"type": "string", "description": "Identifier such as 'coder:task-1' or 'review:summary'"},
+            "value": {"type": "string", "description": "The string value to store (JSON-encode complex data)"},
+            "writtenBy": {"type": "string", "enum": ["planner", "coder", "reviewer", "tester", "memory", "orchestrator"], "description": "Your agent role"}
+          }
+        }
+      },
+      {
+        "name": "CoClaw_get_task_status",
+        "displayName": "Get Agent Task Status",
+        "modelDescription": "Inspect the live status of all tasks in a multi-agent run, or a specific task. Returns pending/running/done/failed and dependency info.",
+        "inputSchema": {
+          "type": "object",
+          "required": ["runId"],
+          "properties": {
+            "runId": {"type": "string", "description": "The orchestration run id"},
+            "taskId": {"type": "string", "description": "Optional specific task id"}
+          }
+        }
+      },
+      {
+        "name": "CoClaw_spawn_agent",
+        "displayName": "Spawn Agent",
+        "modelDescription": "Spawn a new specialized agent task within the current run. ORCHESTRATOR USE ONLY — other agents do not have access. Resolves once the spawned task completes.",
+        "inputSchema": {
+          "type": "object",
+          "required": ["runId", "agent", "prompt"],
+          "properties": {
+            "runId": {"type": "string"},
+            "agent": {"type": "string", "enum": ["coder", "reviewer", "tester", "memory"]},
+            "prompt": {"type": "string"},
+            "dependsOn": {"type": "array", "items": {"type": "string"}, "description": "Optional task ids this dynamic task should wait for"}
+          }
+        }
+      },
+      {
+        "name": "CoClaw_telegram_send_file",
+        "displayName": "Send File via Telegram",
+        "modelDescription": "Upload a file from the workspace to the linked Telegram user as a document. Use when the user asks you to send/share/email/upload a file over Telegram. Path must be inside the workspace folder. Max 50 MB.",
+        "inputSchema": {
+          "type": "object",
+          "required": ["path"],
+          "properties": {
+            "path": {"type": "string", "description": "Workspace-relative file path (preferred) or absolute path inside the workspace."},
+            "caption": {"type": "string", "description": "Optional caption (HTML allowed, ~1000 char max)."}
+          }
         }
       }
     ],
@@ -384,8 +457,54 @@
           "type": "string",
           "default": "22:00",
           "description": "End of active hours for heartbeat (HH:MM, 24h format)"
+        },
+        "CoClaw.telegram.sarcasticReactions": {
+          "type": "boolean",
+          "default": true,
+          "description": "In /open mode, react to each user message with a sarcastic emoji."
+        },
+        "CoClaw.telegram.tone": {
+          "type": "string",
+          "enum": ["sarcastic", "friendly", "professional", "playful", "neutral"],
+          "default": "sarcastic",
+          "description": "Conversational tone the assistant uses in Telegram /open mode."
+        },
+        "CoClaw.telegram.useEmojis": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether the assistant may use emojis in Telegram /open mode (and react to incoming messages)."
+        },
+        "CoClaw.agents.mode": {
+          "type": "string",
+          "enum": ["off", "slash", "always"],
+          "default": "slash",
+          "description": "Multi-agent orchestration mode. 'slash' = run only on /agents. 'always' = route every prompt through the orchestrator (experimental). 'off' = disabled."
+        },
+        "CoClaw.agents.maxParallelCoders": {
+          "type": "integer",
+          "default": 4,
+          "minimum": 1,
+          "maximum": 8,
+          "description": "Maximum number of parallel Coder agents the orchestrator may fan out for a single coder task."
         }
       }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "CoClawAgents",
+          "title": "CoClaw Agents",
+          "icon": "icon.png"
+        }
+      ]
+    },
+    "views": {
+      "CoClawAgents": [
+        {
+          "id": "CoClaw.agentsView",
+          "name": "Agents"
+        }
+      ]
     }
   },
   "scripts": {

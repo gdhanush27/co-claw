@@ -54,6 +54,63 @@ All CoClaw settings are under the `CoClaw.*` namespace. Open them quickly with *
 - **Default:** `""` (empty — uses global preference)
 - **Description:** Override the Copilot model family at the workspace level. When set, this workspace uses the specified model regardless of the global selection. Leave empty to use the globally selected model.
 
+## Heartbeat Settings (`/open` mode)
+
+### `CoClaw.heartbeat.enabled`
+
+- **Type:** boolean
+- **Default:** `true`
+- **Description:** Enable proactive heartbeat checks while `/open` mode is running.
+
+### `CoClaw.heartbeat.intervalMinutes`
+
+- **Type:** number
+- **Default:** `30`
+- **Description:** Minutes between heartbeats. Range: 5–1440.
+
+### `CoClaw.heartbeat.activeHoursStart` / `CoClaw.heartbeat.activeHoursEnd`
+
+- **Type:** string (`HH:MM`, 24h format)
+- **Defaults:** `"08:00"` / `"22:00"`
+- **Description:** Heartbeats only fire inside this window.
+
+## Telegram Settings
+
+### `CoClaw.telegram.tone`
+
+- **Type:** string (enum)
+- **Default:** `"sarcastic"`
+- **Allowed:** `sarcastic`, `friendly`, `professional`, `playful`, `neutral`
+- **Description:** Conversational tone the assistant uses in Telegram `/open` mode. Pick `neutral` if you want no tone addendum on top of the base `SOUL.json` persona.
+
+### `CoClaw.telegram.useEmojis`
+
+- **Type:** boolean
+- **Default:** `true`
+- **Description:** Master switch for emojis. When off, the assistant is told to write plain text only AND incoming-message reactions are skipped.
+
+### `CoClaw.telegram.sarcasticReactions`
+
+- **Type:** boolean
+- **Default:** `true`
+- **Description:** When enabled (and `useEmojis` is on), each user message in `/open` mode gets a sarcastic emoji reaction.
+
+## Multi-Agent Settings
+
+### `CoClaw.agents.mode`
+
+- **Type:** string (enum)
+- **Default:** `"slash"`
+- **Allowed:** `off`, `slash`, `always`
+- **Description:** When `slash`, the orchestrator runs only on `/agents`. When `always`, every prompt is routed through the orchestrator (experimental). `off` disables orchestration entirely.
+
+### `CoClaw.agents.maxParallelCoders`
+
+- **Type:** integer
+- **Default:** `4`
+- **Range:** 1–8
+- **Description:** Maximum number of coder agents that may run in parallel during a `/agents` run.
+
 ## Recommended Configurations
 
 ### Minimal Memory Footprint

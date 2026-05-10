@@ -15,11 +15,17 @@ CoClaw adds a persistent memory layer to GitHub Copilot through the VS Code Lang
 - **Persistent Memory** - Two-layer memory with daily logs and long-term storage
 - **Automatic Extraction** - Captures facts, conventions, preferences, and decisions from conversations
 - **Agentic Coding** - Uses VS Code tools to read, edit, search, and inspect the workspace
+- **Multi-Agent Orchestration** - `/agents` splits a task across Planner, Coder, Reviewer, Tester, and Memory agents that can run in parallel with shared memory; auto-fanout decides how many parallel coders to spawn
+- **Agents Sidebar** - Live tree view of orchestration runs and per-task status (in the CoClaw activity bar icon)
 - **Memory Browser** - Inspect, edit, promote, and delete stored memory entries
 - **Model Switching** - Choose available Copilot models from the status bar or command palette
 - **Identity + Profile** - Customize assistant persona with `SOUL.json` and user preferences with `USER.json`
 - **Telegram Bridge** - Control CoClaw remotely from Telegram with full tool access
 - **OpenClaw Mode** - Persistent `/open` mode with workspace memory, heartbeat checks, and cron jobs
+- **Telegram Settings UI** - `/settings` (or `/s`) opens an interactive button panel to tune any CoClaw setting from your phone
+- **Tone & Emoji Controls** - Pick the assistant's Telegram tone (`sarcastic`, `friendly`, `professional`, `playful`, `neutral`) and toggle emoji use globally
+- **Telegram File Delivery** - Ask the assistant to send any workspace file and it ships it as a real Telegram document (up to 50 MB)
+- **Streamed Telegram Replies** - Prose between tool calls is delivered as separate Telegram messages instead of one giant blob at the end
 - **Telegram Formatting** - Telegram replies render a safe subset of markdown including bold, italics, links, and code blocks
 - **Telegram Cron UI** - Manage cron jobs from Telegram with inline buttons for pause, resume, delete, refresh, and clear-all
 
@@ -51,6 +57,7 @@ Use these in Copilot Chat with `@CoClaw /command`.
 | `/distill` | Distill recent logs into long-term memory |
 | `/clear` | Clear session memory |
 | `/soul` | Edit CoClaw identity and behavior |
+| `/agents` | Run a task through the multi-agent orchestrator (Planner → Coders/Reviewer/Tester/Memory) |
 | `/auto` | Start the Telegram bridge for remote control |
 | `/open` | Start OpenClaw mode with Telegram bridge, workspace memory, heartbeat, and cron support |
 
@@ -79,6 +86,10 @@ Use these in Copilot Chat with `@CoClaw /command`.
 - `/auto` starts the remote Telegram bridge
 - `/open` starts OpenClaw mode with heartbeat and cron job support
 - `/cron` opens a Telegram button-based cron control panel
+- `/settings` (or `/s`) opens an interactive settings panel — tweak tone, emojis, agents, memory, heartbeat, and model preferences without leaving Telegram
+- Tone presets: sarcastic (default), friendly, professional, playful, neutral
+- Ask "send me &lt;path&gt;" and the assistant uploads the file as a Telegram document
+- Sarcastic emoji reactions appear on each incoming message in `/open` mode (toggleable)
 - Telegram replies render a Telegram-safe subset of markdown
 - Natural-language cron deletion requests are intercepted before the LLM path when possible
 
@@ -100,6 +111,11 @@ For full setup and remote usage details, see [docs/telegram.md](docs/telegram.md
 | `CoClaw.heartbeat.intervalMinutes` | `30` | Heartbeat interval in minutes |
 | `CoClaw.heartbeat.activeHoursStart` | `08:00` | Start of active hours for heartbeat |
 | `CoClaw.heartbeat.activeHoursEnd` | `22:00` | End of active hours for heartbeat |
+| `CoClaw.telegram.tone` | `sarcastic` | Conversational tone in `/open` mode (`sarcastic`, `friendly`, `professional`, `playful`, `neutral`) |
+| `CoClaw.telegram.useEmojis` | `true` | Master switch for emojis in replies and message reactions |
+| `CoClaw.telegram.sarcasticReactions` | `true` | React to each `/open` user message with a sarcastic emoji (also requires `useEmojis`) |
+| `CoClaw.agents.mode` | `slash` | Multi-agent mode: `off`, `slash` (only on `/agents`), or `always` (route every prompt) |
+| `CoClaw.agents.maxParallelCoders` | `4` | Maximum number of coder agents that may run in parallel (1–8) |
 
 ## Documentation
 

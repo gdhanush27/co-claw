@@ -12,16 +12,37 @@ import { Heartbeat } from '../heartbeat/Heartbeat';
 import { CronScheduler } from '../cron/CronScheduler';
 import { CronJobResult } from '../cron/CronJob';
 import { buildCronClearConfirmPanel, buildCronControlPanel } from './TelegramCronUi';
+import {
+    buildSettingsRootPanel,
+    buildSettingsGroupPanel,
+    buildSettingEditPanel,
+    coerceValue,
+    getSetting,
+    readSettingValue,
+    writeValue,
+} from './TelegramSettingsUi';
 import { StatusBar } from '../ui/statusBar';
 
 /**
  * Dual-output stream that writes to both the VS Code chat stream
- * and collects text for Telegram.
+ * and (optionally) flushes accumulated text to Telegram in chunks.
+ *
+ * `markdown()` only buffers — it does NOT send to Telegram per-token, since
+ * the model streams char-by-char. `progress()` is called by ToolRunner at
+ * every round/tool boundary, and we use that as the natural flush signal so
+ * the user sees each prose chunk between tool calls as a separate message
+ * (instead of one giant blob at the end).
  */
 class DualStream {
     private parts: string[] = [];
+    private sentLength = 0;
+    private sentAny = false;
+    private flushing: Promise<void> = Promise.resolve();
 
-    constructor(private readonly vscodeStream?: vscode.ChatResponseStream) {}
+    constructor(
+        private readonly vscodeStream?: vscode.ChatResponseStream,
+        private readonly onFlush?: (text: string) => Promise<void>,
+    ) {}
 
     markdown(text: string): void {
         this.parts.push(text);
@@ -30,6 +51,37 @@ class DualStream {
 
     progress(text: string): void {
         this.vscodeStream?.progress(text);
+        // Fire-and-forget flush at every tool/round boundary. Chained on a
+        // single promise so flushes serialize and never overlap.
+        if (this.onFlush) {
+            this.flushing = this.flushing.then(() => this.flush()).catch(() => {});
+        }
+    }
+
+    /** Send any new buffered text to Telegram as a separate message. */
+    async flush(): Promise<void> {
+        if (!this.onFlush) { return; }
+        const all = this.parts.join('');
+        const pending = all.slice(this.sentLength);
+        // Only flush if we have non-trivial new content (avoid spammy fragments).
+        if (pending.trim().length < 3) { return; }
+        this.sentLength = all.length;
+        try {
+            await this.onFlush(pending);
+            this.sentAny = true;
+        } catch {
+            // Best-effort — already collected in getText() for fallback.
+        }
+    }
+
+    /** Wait for any in-flight flush, then send the final remainder. */
+    async finalize(): Promise<void> {
+        try { await this.flushing; } catch { /* ignore */ }
+        await this.flush();
+    }
+
+    hasSentAnything(): boolean {
+        return this.sentAny;
     }
 
     getText(): string {
@@ -96,6 +148,9 @@ export class TelegramBot {
 
     /** Pending cron proposals waiting for Y/N confirmation. Key: callback ID prefix. */
     private pendingCronProposals: Map<string, { schedule: string; name: string; prompt: string }> = new Map();
+
+    /** Per-chat pending settings input — when set, the next text message is treated as the new value. */
+    private pendingSettingInput: Map<number, string> = new Map();
 
     private static readonly MAX_HISTORY = 20;
 
@@ -319,6 +374,26 @@ export class TelegramBot {
         const text = msg.text.trim();
         const chatId = msg.chat.id;
 
+        // Sarcastic reactions: in /open mode, slap an emoji on every non-command user message.
+        // Gated by both `useEmojis` (master switch) and `sarcasticReactions` (this feature specifically).
+        if (this._openMode && !text.startsWith('/')) {
+            const tgCfg = vscode.workspace.getConfiguration('CoClaw.telegram');
+            const reactionsEnabled = tgCfg.get<boolean>('sarcasticReactions', true);
+            const useEmojis = tgCfg.get<boolean>('useEmojis', true);
+            if (reactionsEnabled && useEmojis) {
+                const emoji = pickSarcasticEmoji();
+                this.api?.setMessageReaction(chatId, msg.message_id, emoji)
+                    .catch(() => { /* best-effort */ });
+            }
+        }
+
+        // If the user previously tapped "Type a value" in the settings UI, treat
+        // the next non-command text message as the new value for that setting.
+        if (this.pendingSettingInput.has(chatId) && !text.startsWith('/')) {
+            await this.applyPendingSettingInput(chatId, text);
+            return;
+        }
+
         // Handle bot commands
         if (text === '/start') {
             const reply = '🐾 CoClaw is connected! Send any prompt — I have full tool access (terminal, file edits, etc).';
@@ -355,6 +430,7 @@ export class TelegramBot {
                 '/clear — Clear conversation history',
                 '/stop — Stop the Telegram bridge',
                 '/memory — Show memory summary',
+                '/settings — Open interactive settings UI (alias: /s)',
             ];
             if (this._openMode) {
                 helpLines.push(
@@ -377,6 +453,10 @@ export class TelegramBot {
         }
         if (text === '/memory') {
             await this.sendMemorySummary(chatId);
+            return;
+        }
+        if (text === '/settings' || text === '/s') {
+            await this.openSettingsPanel(chatId);
             return;
         }
         // Heartbeat commands (/open mode only)
@@ -429,8 +509,12 @@ export class TelegramBot {
             // Add current message
             messages.push(vscode.LanguageModelChatMessage.User(prompt));
 
-            // Full tool access — always
-            const tools = vscode.lm.tools.map(t => t as vscode.LanguageModelChatTool);
+            // Full tool access — but strip out tools that require interactive UI
+            // confirmation (browser/preview/simple-browser/etc). In Telegram there's
+            // no way to click "Share existing tab?" so those tools just hang the run.
+            const tools = vscode.lm.tools
+                .filter(t => !isInteractiveUiTool(t.name))
+                .map(t => t as vscode.LanguageModelChatTool);
 
             const tokenSource = new vscode.CancellationTokenSource();
             const token = tokenSource.token;
@@ -441,11 +525,17 @@ export class TelegramBot {
             }, 4000);
 
             let responseText: string;
+            let streamedAny = false;
             try {
                 const response = await model.sendRequest(messages, { tools }, token);
 
-                // Use DualStream so output goes to both VS Code chat and Telegram
-                const dual = new DualStream(this.vscodeStream);
+                // Use DualStream so output goes to both VS Code chat and Telegram.
+                // Pass an onFlush callback so each prose chunk between tool calls
+                // is delivered as its own Telegram message instead of one giant blob.
+                const dual = new DualStream(
+                    this.vscodeStream,
+                    (chunk) => this.api!.sendMessage(chatId, chunk).catch(() => {}),
+                );
                 responseText = await this.toolRunner.processToolCalls(
                     response,
                     dual as unknown as vscode.ChatResponseStream,
@@ -456,6 +546,9 @@ export class TelegramBot {
                     this.toolInvocationToken,
                     undefined,
                 );
+                // Send the final remainder (anything after the last tool call).
+                await dual.finalize();
+                streamedAny = dual.hasSentAnything();
             } finally {
                 clearInterval(typingInterval);
                 tokenSource.dispose();
@@ -472,8 +565,10 @@ export class TelegramBot {
                 this.conversationHistory.shift();
             }
 
-            // Send response to Telegram
-            if (responseText.trim()) {
+            // Send response to Telegram (only if streaming didn't already deliver it).
+            if (streamedAny) {
+                // Already sent in chunks between tool calls — nothing left to do.
+            } else if (responseText.trim()) {
                 await this.api!.sendMessage(chatId, responseText);
             } else {
                 await this.api!.sendMessage(chatId, '(No response generated)');
@@ -597,6 +692,11 @@ export class TelegramBot {
 
         if (data.startsWith('cron_ui:')) {
             await this.handleCronUiCallback(query.id, data, chatId, messageId);
+            return;
+        }
+
+        if (data.startsWith('settings_ui:')) {
+            await this.handleSettingsUiCallback(query.id, data, chatId, messageId);
             return;
         }
 
@@ -962,6 +1062,154 @@ export class TelegramBot {
         await this.api!.sendMessageWithButtons(chatId, text, buttons);
     }
 
+    // ── Settings UI ──────────────────────────────────────────────
+
+    private async openSettingsPanel(chatId: number): Promise<void> {
+        const { text, buttons } = buildSettingsRootPanel();
+        await this.api!.sendMessageWithButtons(chatId, text, buttons);
+        this.vscodeStream?.markdown(`> **Telegram:** /settings opened\n\n`);
+    }
+
+    private async handleSettingsUiCallback(
+        callbackQueryId: string,
+        data: string,
+        chatId?: number,
+        messageId?: number,
+    ): Promise<void> {
+        if (!chatId || !messageId) {
+            await this.api?.answerCallbackQuery(callbackQueryId, '⚠️ Settings panel unavailable');
+            return;
+        }
+        // data shape: settings_ui:<action>[:<arg>[:<arg>]]
+        // actions: root | group:<name> | edit:<key> | set:<key>:<value> | nudge:<key>:<delta> | input:<key> | close
+        const rest = data.substring('settings_ui:'.length);
+        const firstColon = rest.indexOf(':');
+        const action = firstColon === -1 ? rest : rest.substring(0, firstColon);
+        const args = firstColon === -1 ? '' : rest.substring(firstColon + 1);
+
+        try {
+            switch (action) {
+                case 'close': {
+                    await this.api?.answerCallbackQuery(callbackQueryId);
+                    await this.api?.editMessageText(chatId, messageId, '⚙️ Settings closed.');
+                    return;
+                }
+                case 'root': {
+                    const panel = buildSettingsRootPanel();
+                    await this.api?.editMessageText(chatId, messageId, panel.text, 'HTML', panel.buttons);
+                    await this.api?.answerCallbackQuery(callbackQueryId);
+                    return;
+                }
+                case 'group': {
+                    const panel = buildSettingsGroupPanel(args);
+                    await this.api?.editMessageText(chatId, messageId, panel.text, 'HTML', panel.buttons);
+                    await this.api?.answerCallbackQuery(callbackQueryId);
+                    return;
+                }
+                case 'edit': {
+                    const panel = buildSettingEditPanel(args);
+                    if (!panel) {
+                        await this.api?.answerCallbackQuery(callbackQueryId, 'Unknown setting');
+                        return;
+                    }
+                    await this.api?.editMessageText(chatId, messageId, panel.text, 'HTML', panel.buttons);
+                    await this.api?.answerCallbackQuery(callbackQueryId);
+                    return;
+                }
+                case 'set': {
+                    // args = "<key>:<value>"
+                    const idx = args.lastIndexOf(':');
+                    const key = idx === -1 ? args : args.substring(0, idx);
+                    const raw = idx === -1 ? '' : args.substring(idx + 1);
+                    const setting = getSetting(key);
+                    if (!setting) {
+                        await this.api?.answerCallbackQuery(callbackQueryId, 'Unknown setting');
+                        return;
+                    }
+                    const value = coerceValue(setting, raw);
+                    if (value === undefined && setting.type !== 'string') {
+                        await this.api?.answerCallbackQuery(callbackQueryId, 'Invalid value');
+                        return;
+                    }
+                    await writeValue(key, value);
+                    const panel = buildSettingEditPanel(key)!;
+                    await this.api?.editMessageText(chatId, messageId, panel.text, 'HTML', panel.buttons);
+                    await this.api?.answerCallbackQuery(callbackQueryId, '✅ Saved');
+                    this.vscodeStream?.markdown(`> ⚙️ ${key} = ${String(value)}\n\n`);
+                    return;
+                }
+                case 'nudge': {
+                    // args = "<key>:<delta>"
+                    const idx = args.lastIndexOf(':');
+                    const key = args.substring(0, idx);
+                    const delta = Number(args.substring(idx + 1));
+                    const setting = getSetting(key);
+                    if (!setting || setting.type !== 'number') {
+                        await this.api?.answerCallbackQuery(callbackQueryId, 'Cannot nudge');
+                        return;
+                    }
+                    const current = Number(readSettingValue(key) ?? 0);
+                    const next = coerceValue(setting, String(current + delta));
+                    await writeValue(key, next);
+                    const panel = buildSettingEditPanel(key)!;
+                    await this.api?.editMessageText(chatId, messageId, panel.text, 'HTML', panel.buttons);
+                    await this.api?.answerCallbackQuery(callbackQueryId, `→ ${next}`);
+                    this.vscodeStream?.markdown(`> ⚙️ ${key} = ${String(next)}\n\n`);
+                    return;
+                }
+                case 'input': {
+                    // args = "<key>" — arm a one-shot text-message capture
+                    const setting = getSetting(args);
+                    if (!setting) {
+                        await this.api?.answerCallbackQuery(callbackQueryId, 'Unknown setting');
+                        return;
+                    }
+                    this.pendingSettingInput.set(chatId, args);
+                    const prompt = `⌨ Send the new value for <b>${setting.label}</b> as your next message.\nSend <code>/cancel</code> to abort.`;
+                    await this.api?.sendMessage(chatId, prompt);
+                    await this.api?.answerCallbackQuery(callbackQueryId, 'Send a value...');
+                    return;
+                }
+                default:
+                    await this.api?.answerCallbackQuery(callbackQueryId);
+            }
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            await this.api?.answerCallbackQuery(callbackQueryId, `❌ ${msg}`);
+        }
+    }
+
+    private async applyPendingSettingInput(chatId: number, text: string): Promise<void> {
+        const key = this.pendingSettingInput.get(chatId);
+        if (!key) { return; }
+
+        if (text === '/cancel') {
+            this.pendingSettingInput.delete(chatId);
+            await this.api!.sendMessage(chatId, '↩ Setting edit cancelled.');
+            return;
+        }
+
+        const setting = getSetting(key);
+        if (!setting) {
+            this.pendingSettingInput.delete(chatId);
+            await this.api!.sendMessage(chatId, '⚠️ Unknown setting.');
+            return;
+        }
+
+        const value = coerceValue(setting, text);
+        if (value === undefined && setting.type !== 'string') {
+            await this.api!.sendMessage(chatId, `⚠️ "${text}" is not a valid value for <b>${setting.label}</b>. Try again or send /cancel.`);
+            return;
+        }
+
+        await writeValue(key, value);
+        this.pendingSettingInput.delete(chatId);
+
+        const panel = buildSettingEditPanel(key)!;
+        await this.api!.sendMessageWithButtons(chatId, `✅ Saved.\n\n${panel.text}`, panel.buttons);
+        this.vscodeStream?.markdown(`> ⚙️ ${key} = ${String(value)}\n\n`);
+    }
+
     private async handleCronUiCallback(
         callbackQueryId: string,
         data: string,
@@ -1046,4 +1294,45 @@ export class TelegramBot {
     private sleep(ms: number): Promise<void> {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
+
+    /**
+     * Send a file to the authorized user. Returns true on success, false if
+     * the bot isn't connected / linked. Used by the `CoClaw_telegram_send_file` tool.
+     */
+    async sendFileToAuthorizedUser(fileName: string, content: Buffer, caption?: string): Promise<boolean> {
+        const userId = this.config.getUserId();
+        if (!userId || !this.api) { return false; }
+        await this.api.sendDocument(userId, fileName, content, caption);
+        return true;
+    }
+}
+
+/** Telegram-allowed emojis with a sarcastic / dismissive vibe for /open mode. */
+const SARCASTIC_EMOJIS = ['🤡', '🥱', '🤔', '👀', '🤨', '🌚', '💩', '🦄', '🥴', '🤓', '🤯', '🍌', '🙈', '🙉'];
+
+function pickSarcasticEmoji(): string {
+    return SARCASTIC_EMOJIS[Math.floor(Math.random() * SARCASTIC_EMOJIS.length)];
+}
+
+/**
+ * Tools that pop up a VS Code UI prompt (e.g. "Share an existing browser tab?")
+ * and therefore can't run in Telegram /open mode — filter them out before
+ * handing the tool list to the model. Match by substring (case-insensitive)
+ * so we catch vendor-prefixed variants like `vscode_open_simple_browser`,
+ * `copilot_openSimpleBrowser`, etc.
+ */
+const INTERACTIVE_UI_TOOL_PATTERNS = [
+    'simple_browser', 'simplebrowser',
+    'open_browser', 'openbrowser', 'browser_page', 'browserpage',
+    'live_preview', 'livepreview',
+    'open_preview', 'openpreview',
+    'webview', 'web_view',
+    'screenshot',
+    'click_element', 'fill_form',
+    'open_terminal', 'openterminal',
+];
+
+function isInteractiveUiTool(name: string): boolean {
+    const n = name.toLowerCase();
+    return INTERACTIVE_UI_TOOL_PATTERNS.some(p => n.includes(p));
 }

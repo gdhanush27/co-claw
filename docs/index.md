@@ -15,11 +15,12 @@ CoClaw adds a persistent memory layer to GitHub Copilot through the VS Code Lang
 - **Persistent Memory** — Two-layer memory system with daily logs and long-term storage.
 - **Automatic Extraction** — Captures facts, decisions, and preferences from conversations.
 - **Agentic Coding** — Uses VS Code tools to read, edit, and search within workspace boundaries.
+- **Multi-Agent Orchestration** — `/agents` plans and parallelizes tasks across Planner, Coders, Reviewer, Tester, and Memory agents with shared memory and a live sidebar view.
 - **Memory Browser** — Inspect, edit, promote, and delete memory entries in a webview panel.
 - **Model Switching** — Choose from available Copilot models via status bar or command palette.
 - **Identity + Profile** — Customize the assistant persona and your coding preferences.
 - **Import/Export** — Backup and restore memories as JSON.
-- **Telegram Bridge** — Control CoClaw remotely from Telegram with full tool access.
+- **Telegram Bridge** — Control CoClaw remotely from Telegram with full tool access, an interactive `/settings` panel, configurable tone, file uploads, and prose streamed between tool calls.
 
 ## Documentation
 

@@ -13,6 +13,15 @@ import { MemoryWriteTool } from './tools/memoryWriteTool';
 import { MemoryDeleteTool } from './tools/memoryDeleteTool';
 import { MemoryUpdateTool } from './tools/memoryUpdateTool';
 import { WorkspaceContextTool } from './tools/workspaceContextTool';
+import { SharedMemoryReadTool } from './tools/sharedMemoryReadTool';
+import { SharedMemoryWriteTool } from './tools/sharedMemoryWriteTool';
+import { GetTaskStatusTool } from './tools/getTaskStatusTool';
+import { SpawnAgentTool } from './tools/spawnAgentTool';
+import { TelegramSendFileTool } from './tools/telegramSendFileTool';
+import { RunRegistry } from './agents/RunRegistry';
+import { SharedMemoryStore } from './agents/SharedMemoryStore';
+import { Orchestrator, SpawnerHolder } from './agents/Orchestrator';
+import { AgentTreeProvider } from './ui/agentTreeProvider';
 import { registerSelectModelCommand } from './commands/selectModel';
 import { registerShowMemoryCommand } from './commands/showMemory';
 import { registerClearMemoryCommand } from './commands/clearMemory';
@@ -54,8 +63,15 @@ export function activate(context: vscode.ExtensionContext) {
     const memoryPanel = new MemoryPanel(memoryEngine, context.extensionUri);
     context.subscriptions.push({ dispose: () => memoryPanel.dispose() });
 
+    // Multi-agent orchestration
+    const runRegistry = new RunRegistry();
+    context.subscriptions.push({ dispose: () => runRegistry.dispose() });
+    const sharedMemoryStore = new SharedMemoryStore(memoryEngine);
+    const spawnerHolder: SpawnerHolder = { current: undefined };
+    const orchestrator = new Orchestrator(modelManager, runRegistry, sharedMemoryStore, spawnerHolder);
+
     // Chat participant
-    const participantHandler = new ParticipantHandler(modelManager, promptBuilder, memoryEngine, statusBar);
+    const participantHandler = new ParticipantHandler(modelManager, promptBuilder, memoryEngine, statusBar, orchestrator);
     const participant = vscode.chat.createChatParticipant('CoClaw.assistant', participantHandler.handler);
     participant.iconPath = new vscode.ThemeIcon('hubot');
     participant.followupProvider = createFollowUpProvider();
@@ -75,6 +91,17 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.lm.registerTool('CoClaw_memory_delete', new MemoryDeleteTool(memoryEngine)),
         vscode.lm.registerTool('CoClaw_memory_update', new MemoryUpdateTool(memoryEngine)),
         vscode.lm.registerTool('CoClaw_workspace_context', new WorkspaceContextTool()),
+        vscode.lm.registerTool('CoClaw_shared_memory_read', new SharedMemoryReadTool(sharedMemoryStore)),
+        vscode.lm.registerTool('CoClaw_shared_memory_write', new SharedMemoryWriteTool(sharedMemoryStore)),
+        vscode.lm.registerTool('CoClaw_get_task_status', new GetTaskStatusTool(runRegistry)),
+        vscode.lm.registerTool('CoClaw_spawn_agent', new SpawnAgentTool(spawnerHolder)),
+    );
+
+    // Agent sidebar TreeView
+    const agentTreeProvider = new AgentTreeProvider(runRegistry);
+    context.subscriptions.push(
+        vscode.window.registerTreeDataProvider('CoClaw.agentsView', agentTreeProvider),
+        { dispose: () => agentTreeProvider.dispose() },
     );
 
     // Telegram bot
@@ -82,6 +109,11 @@ export function activate(context: vscode.ExtensionContext) {
     const telegramBot = new TelegramBot(telegramConfig, modelManager, promptBuilder, memoryEngine, statusBar, storageUri);
     participantHandler.setTelegramBot(telegramBot);
     context.subscriptions.push({ dispose: () => telegramBot.dispose() });
+
+    // Telegram-aware LM tool (must be registered after bot construction)
+    context.subscriptions.push(
+        vscode.lm.registerTool('CoClaw_telegram_send_file', new TelegramSendFileTool(telegramBot)),
+    );
 
     // Commands
     context.subscriptions.push(

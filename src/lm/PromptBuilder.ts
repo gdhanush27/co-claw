@@ -132,7 +132,18 @@ Examples of schedules:
 - "0 7 * * *" = every day at 7:00 AM
 - "0 */2 * * *" = every 2 hours
 - "30 9 * * 1-5" = weekdays at 9:30 AM
+
+FILE DELIVERY — When the user asks you to "send", "share", "give me", or "upload" a file (e.g. "send me the package.json", "share that log file"), use the \`CoClaw_telegram_send_file\` tool with the workspace-relative path. Do NOT just paste the file contents into chat — actually call the tool so the user gets the real file in Telegram.
 </open_mode>`);
+
+            // Tone + emoji preferences for /open mode (Telegram session).
+            const tgCfg = vscode.workspace.getConfiguration('CoClaw.telegram');
+            const tone = tgCfg.get<string>('tone', 'sarcastic');
+            const useEmojis = tgCfg.get<boolean>('useEmojis', true);
+            const toneBlock = buildToneBlock(tone, useEmojis);
+            if (toneBlock) {
+                parts.push(toneBlock);
+            }
         }
 
         // Workspace-based memory (MEMORY.md + daily logs) — injected in /open mode
@@ -193,4 +204,71 @@ ${wsLines.join('\n')}
         s = s.replace(/&lt;\/?\s*(system|identity|behavior|user_preferences|memory|workspace_context|instructions?)\s*&gt;/gi, '');
         return s;
     }
+}
+
+/**
+ * Build a tone-and-emoji prompt block for /open mode based on user settings.
+ * Returns an empty string when tone is "neutral" and emojis are off.
+ */
+function buildToneBlock(tone: string, useEmojis: boolean): string {
+    const t = (tone || 'sarcastic').toLowerCase();
+    const emojiNote = useEmojis
+        ? '- Use emojis freely (1-3 per message) to add personality and color.'
+        : '- Do NOT use emojis. Plain text only.';
+
+    let toneRules: string;
+    switch (t) {
+        case 'sarcastic':
+            toneRules = [
+                '- Open every reply with a single dry, sarcastic one-liner (max ~15 words).',
+                useEmojis
+                    ? '- Sprinkle 1-3 fitting emojis (🤡 🥱 🤔 👀 🤨 🌚 💩 🦄 🥴 🤓 🤯 🍌 🙈).'
+                    : emojiNote,
+                '- After the snark, deliver the ACTUAL answer / do the actual work properly. Sarcasm never replaces correctness.',
+                '- Keep it playful, never mean. Punch up at the task, not down at the user.',
+                "- Don't repeat the same opener twice in a row.",
+            ].join('\n');
+            break;
+        case 'friendly':
+            toneRules = [
+                '- Be warm, encouraging, and conversational. Talk like a helpful friend.',
+                emojiNote,
+                '- Acknowledge what the user wants briefly before diving in.',
+                '- Celebrate small wins ("nice", "got it", "done") without overdoing it.',
+            ].join('\n');
+            break;
+        case 'professional':
+            toneRules = [
+                '- Be concise, precise, and businesslike. No filler, no jokes, no chit-chat.',
+                useEmojis
+                    ? '- Use emojis sparingly (0-1) and only when functional (✅ ❌ ⚠️ 📁).'
+                    : emojiNote,
+                '- Lead with the answer. Use short paragraphs and clear bullet points.',
+            ].join('\n');
+            break;
+        case 'playful':
+            toneRules = [
+                '- Be enthusiastic, fun, and a little silly. Use casual language.',
+                useEmojis
+                    ? '- Lean into emojis (2-4 per message): 🚀 ✨ 🎉 🐾 🔥 💪 🦞 🤩 😎.'
+                    : emojiNote,
+                '- Hype the user up a bit, but always finish the actual work properly.',
+            ].join('\n');
+            break;
+        case 'neutral':
+        default:
+            // Neutral + no-emojis = no addendum needed (use the base soul prompt as-is).
+            if (!useEmojis) { return ''; }
+            toneRules = [
+                '- Keep tone calm and matter-of-fact.',
+                emojiNote,
+            ].join('\n');
+            break;
+    }
+
+    return `<tone_preferences>
+You are running in a Telegram session. Apply this tone on top of your normal behavior:
+${toneRules}
+- Tone is the WRAPPER, not the substance. Always complete the actual task correctly using tools.
+</tone_preferences>`;
 }
