@@ -571,10 +571,10 @@
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
-    "@types/node": "^20.11.0",
-    "@types/vscode": "^1.93.0",
-    "@vscode/vsce": "^3.0.0",
-    "esbuild": "^0.25.0",
+    "@types/node": "^20.19.40",
+    "@types/vscode": "^1.118.0",
+    "@vscode/vsce": "^3.9.1",
+    "esbuild": "^0.28.0",
     "mocha": "^11.7.5",
     "ts-node": "^10.9.2",
     "typescript": "^5.3.0"
