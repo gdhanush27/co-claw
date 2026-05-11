@@ -20,6 +20,7 @@ CoClaw adds a persistent memory layer to GitHub Copilot through the VS Code Lang
 - **Model Switching** — Choose from available Copilot models via status bar or command palette.
 - **Identity + Profile** — Customize the assistant persona and your coding preferences.
 - **Import/Export** — Backup and restore memories as JSON.
+- **OpenClaw Mode** — Persistent `/open` mode with workspace memory, heartbeat checks, and cron job support.
 - **Telegram Bridge** — Control CoClaw remotely from Telegram with full tool access, an interactive `/settings` panel, configurable tone, file uploads, and prose streamed between tool calls.
 
 ## Documentation

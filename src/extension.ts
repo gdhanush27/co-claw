@@ -66,7 +66,7 @@ export function activate(context: vscode.ExtensionContext) {
     // Multi-agent orchestration
     const runRegistry = new RunRegistry();
     context.subscriptions.push({ dispose: () => runRegistry.dispose() });
-    const sharedMemoryStore = new SharedMemoryStore(memoryEngine);
+    const sharedMemoryStore = new SharedMemoryStore(storageUri);
     const spawnerHolder: SpawnerHolder = { current: undefined };
     const orchestrator = new Orchestrator(modelManager, runRegistry, sharedMemoryStore, spawnerHolder);
 

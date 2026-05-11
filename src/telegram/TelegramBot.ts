@@ -374,16 +374,22 @@ export class TelegramBot {
         const text = msg.text.trim();
         const chatId = msg.chat.id;
 
-        // Sarcastic reactions: in /open mode, slap an emoji on every non-command user message.
-        // Gated by both `useEmojis` (master switch) and `sarcasticReactions` (this feature specifically).
+        // AI-chosen reactions: in /open mode, ask a small model whether (and which)
+        // emoji to react with. Fired-and-forgotten so it never blocks the main reply
+        // pipeline. Gated by both `useEmojis` (master switch) and `sarcasticReactions`.
         if (this._openMode && !text.startsWith('/')) {
             const tgCfg = vscode.workspace.getConfiguration('CoClaw.telegram');
             const reactionsEnabled = tgCfg.get<boolean>('sarcasticReactions', true);
             const useEmojis = tgCfg.get<boolean>('useEmojis', true);
             if (reactionsEnabled && useEmojis) {
-                const emoji = pickSarcasticEmoji();
-                this.api?.setMessageReaction(chatId, msg.message_id, emoji)
-                    .catch(() => { /* best-effort */ });
+                // Capture refs locally; do NOT await — this must not delay processPrompt.
+                const apiRef = this.api;
+                void this.chooseEmojiViaAI(text).then(emoji => {
+                    if (emoji && apiRef) {
+                        apiRef.setMessageReaction(chatId, msg.message_id, emoji)
+                            .catch(() => { /* best-effort */ });
+                    }
+                }).catch(() => { /* best-effort */ });
             }
         }
 
@@ -1107,7 +1113,7 @@ export class TelegramBot {
                     return;
                 }
                 case 'edit': {
-                    const panel = buildSettingEditPanel(args);
+                    const panel = await buildSettingEditPanel(args);
                     if (!panel) {
                         await this.api?.answerCallbackQuery(callbackQueryId, 'Unknown setting');
                         return;
@@ -1132,7 +1138,7 @@ export class TelegramBot {
                         return;
                     }
                     await writeValue(key, value);
-                    const panel = buildSettingEditPanel(key)!;
+                    const panel = (await buildSettingEditPanel(key))!;
                     await this.api?.editMessageText(chatId, messageId, panel.text, 'HTML', panel.buttons);
                     await this.api?.answerCallbackQuery(callbackQueryId, '✅ Saved');
                     this.vscodeStream?.markdown(`> ⚙️ ${key} = ${String(value)}\n\n`);
@@ -1151,7 +1157,7 @@ export class TelegramBot {
                     const current = Number(readSettingValue(key) ?? 0);
                     const next = coerceValue(setting, String(current + delta));
                     await writeValue(key, next);
-                    const panel = buildSettingEditPanel(key)!;
+                    const panel = (await buildSettingEditPanel(key))!;
                     await this.api?.editMessageText(chatId, messageId, panel.text, 'HTML', panel.buttons);
                     await this.api?.answerCallbackQuery(callbackQueryId, `→ ${next}`);
                     this.vscodeStream?.markdown(`> ⚙️ ${key} = ${String(next)}\n\n`);
@@ -1205,7 +1211,7 @@ export class TelegramBot {
         await writeValue(key, value);
         this.pendingSettingInput.delete(chatId);
 
-        const panel = buildSettingEditPanel(key)!;
+        const panel = (await buildSettingEditPanel(key))!;
         await this.api!.sendMessageWithButtons(chatId, `✅ Saved.\n\n${panel.text}`, panel.buttons);
         this.vscodeStream?.markdown(`> ⚙️ ${key} = ${String(value)}\n\n`);
     }
@@ -1296,6 +1302,61 @@ export class TelegramBot {
     }
 
     /**
+     * Ask the active model whether to react to a Telegram message and, if so,
+     * which emoji from the Telegram-allowed set best fits. The model is
+     * instructed to respond `NONE` when no reaction is warranted, so most
+     * messages stay un-reacted.
+     *
+     * Always returns quickly (or undefined on any failure) and never throws.
+     * Designed to be called fire-and-forget so it never adds latency to the
+     * primary response pipeline.
+     */
+    private async chooseEmojiViaAI(userText: string): Promise<string | undefined> {
+        try {
+            const model = await this.modelManager.getActiveModel().catch(() => undefined);
+            if (!model) { return undefined; }
+
+            const snippet = userText.length > 600 ? userText.slice(0, 600) + '…' : userText;
+            const allowed = ALLOWED_REACTION_EMOJIS.join(' ');
+            const system =
+                'You decide whether a Telegram bot should add an emoji reaction to a user message. ' +
+                'React only when an emoji genuinely fits the tone or content — most messages should get NONE. ' +
+                'Aim to react to roughly 1 in 4 messages at most. ' +
+                'When you do react, pick exactly one emoji from this allowed set: ' + allowed + '. ' +
+                'Respond with ONLY the single chosen emoji character, or the literal word NONE. No other text.';
+
+            const cts = new vscode.CancellationTokenSource();
+            // Hard timeout: if the model is slow, give up — we never want to delay anything.
+            const timer = setTimeout(() => cts.cancel(), 4000);
+
+            try {
+                const messages = [
+                    vscode.LanguageModelChatMessage.User(system),
+                    vscode.LanguageModelChatMessage.User(`User message:\n${snippet}`),
+                ];
+                const resp = await model.sendRequest(messages, {}, cts.token);
+                let out = '';
+                for await (const chunk of resp.text) {
+                    out += chunk;
+                    if (out.length > 32) { break; } // expect a single emoji or "NONE"
+                }
+                const trimmed = out.trim();
+                if (!trimmed || /^none$/i.test(trimmed)) { return undefined; }
+                // Find the first allowed emoji that appears in the response.
+                for (const e of ALLOWED_REACTION_EMOJIS) {
+                    if (trimmed.includes(e)) { return e; }
+                }
+                return undefined;
+            } finally {
+                clearTimeout(timer);
+                cts.dispose();
+            }
+        } catch {
+            return undefined;
+        }
+    }
+
+    /**
      * Send a file to the authorized user. Returns true on success, false if
      * the bot isn't connected / linked. Used by the `CoClaw_telegram_send_file` tool.
      */
@@ -1307,12 +1368,21 @@ export class TelegramBot {
     }
 }
 
-/** Telegram-allowed emojis with a sarcastic / dismissive vibe for /open mode. */
-const SARCASTIC_EMOJIS = ['🤡', '🥱', '🤔', '👀', '🤨', '🌚', '💩', '🦄', '🥴', '🤓', '🤯', '🍌', '🙈', '🙉'];
-
-function pickSarcasticEmoji(): string {
-    return SARCASTIC_EMOJIS[Math.floor(Math.random() * SARCASTIC_EMOJIS.length)];
-}
+/**
+ * Telegram-allowed reaction emojis (Bot API 7.0+ standard set).
+ * The model is constrained to pick from this list or skip.
+ */
+const ALLOWED_REACTION_EMOJIS = [
+    '👍', '👎', '❤', '🔥', '🥰', '👏', '😁', '🤔',
+    '🤯', '😱', '🤬', '😢', '🎉', '🤩', '🤮', '💩',
+    '🙏', '👌', '🕊', '🤡', '🥱', '🥴', '🐳', '❤‍🔥',
+    '🌚', '🌭', '💯', '🤣', '⚡', '🍌', '🏆', '💔',
+    '🤨', '😐', '🍓', '🍾', '💋', '🖕', '😈', '😴',
+    '😭', '🤓', '👻', '👨‍💻', '👀', '🎃', '🙈', '😇',
+    '😨', '🤝', '✍', '🤗', '🫡', '🎅', '🎄', '☃',
+    '💅', '🤪', '🗿', '🆒', '💘', '🙉', '🦄', '😘',
+    '💊', '🙊', '😎', '👾', '🤷‍♂', '🤷', '🤷‍♀', '😡',
+];
 
 /**
  * Tools that pop up a VS Code UI prompt (e.g. "Share an existing browser tab?")

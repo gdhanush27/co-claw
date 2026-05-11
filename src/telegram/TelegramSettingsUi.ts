@@ -3,6 +3,11 @@ import { TelegramInlineKeyboard, TelegramInlineButton } from './TelegramCronUi';
 
 export type SettingType = 'boolean' | 'number' | 'string' | 'enum';
 
+export interface DynamicOption {
+    value: string;
+    label?: string;
+}
+
 export interface SettingDefinition {
     key: string;            // Full setting key e.g. "CoClaw.agents.mode"
     label: string;          // Short human label
@@ -14,6 +19,13 @@ export interface SettingDefinition {
     step?: number;
     /** Logical group for the root menu. */
     group: string;
+    /**
+     * Optional dynamic option provider. When set, the editor renders the
+     * returned values as enum-style buttons (instead of a free-text input)
+     * regardless of the declared `type`. Used for runtime-discovered choices
+     * such as the available Copilot model families.
+     */
+    dynamicOptions?: () => Promise<DynamicOption[]>;
 }
 
 /**
@@ -46,7 +58,26 @@ export const SETTINGS: SettingDefinition[] = [
     { key: 'CoClaw.telegram.sarcasticReactions', label: 'Sarcastic reactions', description: 'React with a sarcastic emoji to each /open message', type: 'boolean', group: 'Telegram' },
 
     // Model
-    { key: 'CoClaw.model.family', label: 'Model family', description: 'Preferred Copilot model family (blank = default)', type: 'string', group: 'Model' },
+    {
+        key: 'CoClaw.model.family',
+        label: 'Model family',
+        description: 'Preferred Copilot model family (blank = default)',
+        type: 'string',
+        group: 'Model',
+        dynamicOptions: async () => {
+            try {
+                const models = await vscode.lm.selectChatModels({ vendor: 'copilot' });
+                // Deduplicate by family while keeping the first model's name as label.
+                const seen = new Map<string, string>();
+                for (const m of models) {
+                    if (!seen.has(m.family)) { seen.set(m.family, m.name); }
+                }
+                return Array.from(seen.entries()).map(([family, name]) => ({ value: family, label: name }));
+            } catch {
+                return [];
+            }
+        },
+    },
 ];
 
 /** Group name -> settings */
@@ -117,7 +148,7 @@ export function buildSettingsGroupPanel(group: string): { text: string; buttons:
 }
 
 /** Build a panel for editing a single setting. */
-export function buildSettingEditPanel(key: string): { text: string; buttons: TelegramInlineKeyboard } | undefined {
+export async function buildSettingEditPanel(key: string): Promise<{ text: string; buttons: TelegramInlineKeyboard } | undefined> {
     const s = getSetting(key);
     if (!s) { return undefined; }
 
@@ -132,7 +163,25 @@ export function buildSettingEditPanel(key: string): { text: string; buttons: Tel
 
     const buttons: TelegramInlineKeyboard = [];
 
-    if (s.type === 'boolean') {
+    // Dynamic options take precedence — render runtime choices as buttons.
+    if (s.dynamicOptions) {
+        const opts = await s.dynamicOptions();
+        if (opts.length === 0) {
+            lines.push('<i>(no options available right now)</i>');
+        } else {
+            lines.push('Pick a value:');
+            const row: TelegramInlineButton[] = [];
+            for (const o of opts) {
+                const label = o.label ? `${o.label}` : o.value;
+                row.push({ text: label, callback_data: `settings_ui:set:${s.key}:${o.value}` });
+                if (row.length === 2) { buttons.push(row.splice(0)); }
+            }
+            if (row.length > 0) { buttons.push(row); }
+        }
+        buttons.push([
+            { text: '🗑 Clear (use default)', callback_data: `settings_ui:set:${s.key}:` },
+        ]);
+    } else if (s.type === 'boolean') {
         lines.push('Tap to toggle:');
         buttons.push([
             { text: '✅ on',  callback_data: `settings_ui:set:${s.key}:true` },

@@ -55,6 +55,23 @@ The workspace context tool provides:
 
 This lets the model understand your current context without searching.
 
+### Multi-Agent & Orchestration Tools
+
+These tools are used internally by the multi-agent orchestrator (`/agents`) and by specialized agents running in parallel:
+
+| Tool | Description |
+|---|---|
+| `CoClaw_shared_memory_read` | Read key/value entries written by sibling agents in the current orchestration run |
+| `CoClaw_shared_memory_write` | Write a key/value entry so dependent agents can read it |
+| `CoClaw_get_task_status` | Inspect the live status (pending/running/done/failed) of all tasks in a multi-agent run |
+| `CoClaw_spawn_agent` | Spawn a new specialized agent within an orchestration run |
+
+### Telegram Tool
+
+| Tool | Description |
+|---|---|
+| `CoClaw_telegram_send_file` | Upload a workspace file to the linked Telegram user as a document (up to 50 MB) |
+
 ## Safety Features
 
 ### Workspace Boundaries

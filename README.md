@@ -2,9 +2,10 @@
 
 AI coding assistant with persistent memory, powered by GitHub Copilot.
 
+![Version](https://img.shields.io/badge/version-0.2.0-informational)
 ![VS Code](https://img.shields.io/badge/VS%20Code-1.93%2B-blue?logo=visual-studio-code)
 ![Copilot Required](https://img.shields.io/badge/Copilot-Required-orange?logo=github)
-![License](https://img.shields.io/badge/License-Apache-green)
+![License](https://img.shields.io/badge/License-Apache--2.0-green)
 
 ---
 
@@ -119,11 +120,16 @@ For full setup and remote usage details, see [docs/telegram.md](docs/telegram.md
 
 ## Documentation
 
-- [docs/getting-started.md](docs/getting-started.md)
-- [docs/commands.md](docs/commands.md)
-- [docs/memory-system.md](docs/memory-system.md)
-- [docs/telegram.md](docs/telegram.md)
-- [docs/configuration.md](docs/configuration.md)
+- [Getting Started](docs/getting-started.md)
+- [Commands](docs/commands.md)
+- [Memory System](docs/memory-system.md)
+- [Memory Browser](docs/memory-browser.md)
+- [Identity & Profile](docs/identity-profile.md)
+- [Model Switching](docs/model-switching.md)
+- [Tools & Agentic Coding](docs/tools-agentic.md)
+- [Telegram Bridge](docs/telegram.md)
+- [Configuration](docs/configuration.md)
+- [Documentation Index](docs/index.md)
 
 ## Privacy
 

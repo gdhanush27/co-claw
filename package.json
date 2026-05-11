@@ -2,7 +2,7 @@
   "name": "CoClaw",
   "displayName": "CoClaw",
   "description": "AI coding assistant with persistent memory, powered by GitHub Copilot",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "gdhanush270",
   "license": "Apache-2.0",
   "icon": "icon.png",
