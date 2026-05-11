@@ -48,6 +48,20 @@ updates:
     commit-message:
       prefix: chore(ci)
       include: scope
+    groups:
+      # Roll all minor/patch action bumps into one weekly PR so the inbox
+      # doesn't fill up with one PR per `uses:` line.
+      github-actions:
+        patterns: ["*"]
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # Skip major-version bumps automatically. v4 -> v6 of an action can
+      # change inputs, env contracts, or output shape; promote those by
+      # hand only when you've read the release notes.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     labels:
       - dependencies
       - github-actions
