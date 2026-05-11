@@ -73,11 +73,30 @@ git push origin v0.2.2
 
 The release workflow refuses to publish if `package.json` and the tag disagree.
 
-## Dependabot
+## Dependency updates
 
-`dependabot.yml` opens grouped weekly PRs for npm and GitHub Actions
-dependencies (Monday 06:00 IST). Major-version bumps are ignored to avoid
-forced migrations; promote them by hand when you're ready.
+This repo intentionally has **no Dependabot config** — we don't want
+auto-generated PRs cluttering the queue. Dependency hygiene is a manual
+discipline:
+
+```bash
+npm outdated          # see what's behind
+npm audit             # see what's vulnerable
+npm update            # bump within the lockfile's semver range
+```
+
+Re-enable Dependabot later by re-creating `.github/dependabot.yml` and
+turning `dependabot_security_updates` back on:
+
+```bash
+gh api --method PATCH repos/gdhanush27/co-claw \
+  -f 'security_and_analysis[dependabot_security_updates][status]=enabled'
+```
+
+Dependabot **vulnerability alerts** (notifications only — no PRs) remain
+enabled by default for public repos. Disable them with
+`gh api --method DELETE repos/gdhanush27/co-claw/vulnerability-alerts` if
+you want full silence.
 
 ## CODEOWNERS
 
