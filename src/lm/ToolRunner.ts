@@ -235,10 +235,12 @@ export class ToolRunner {
         const keepLast = aggressive ? 4 : 6; // 2-3 most recent rounds
         const removable = toolMessages - keepLast;
 
-        if (removable > 0) {
-            // Remove from baseMessageCount in chunks of 2 (assistant+user pairs)
-            const toRemove = Math.min(removable, Math.ceil(removable / 2) * 2);
-            // Replace removed messages with a summary
+        if (removable >= 2) {
+            // Always remove FULL assistant/user round-trip pairs. Removing an
+            // odd count corrupts the transcript and makes the next model call
+            // see an unmatched assistant message.
+            const toRemove = Math.floor(removable / 2) * 2;
+            if (toRemove < 2) { return; }
             const summary = new vscode.LanguageModelTextPart(
                 `[${toRemove / 2} earlier tool rounds omitted to fit context window. Continue with the task.]`
             );

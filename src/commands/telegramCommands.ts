@@ -63,8 +63,15 @@ export function registerLinkTelegramCommand(
             );
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            await config.clear();
-            vscode.window.showErrorMessage(`Failed to start Telegram bot: ${msg}`);
+            // Don't wipe both credentials on a transient failure (network blip,
+            // rate limit, getMe 502). The token is the most likely culprit
+            // since it's user-typed and the API verifies it; the user ID is
+            // never wrong from the API's perspective. Clearing only the token
+            // means a retry just needs the new token, not both inputs again.
+            await config.clearBotToken().catch(() => undefined);
+            vscode.window.showErrorMessage(
+                `Failed to start Telegram bot: ${msg}. Run 'CoClaw: Link Telegram Bot' again to retry; your user ID is still saved.`,
+            );
         }
     });
 }

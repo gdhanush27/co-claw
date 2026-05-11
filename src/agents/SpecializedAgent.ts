@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { AGENT_DEFINITIONS } from './AgentDefinitions';
 import { AgentRole } from './types';
+import { selectAutonomousTools } from '../lm/toolFilter';
 
 const MAX_TOOL_ROUNDS = 15;
 const MAX_RESULT_CHARS = 12000;
@@ -32,7 +33,13 @@ export class SpecializedAgent {
         const def = AGENT_DEFINITIONS[role];
         if (!def) { throw new Error(`Unknown agent role: ${role}`); }
 
-        const tools = vscode.lm.tools.filter(t => def.allowsTool(t.name)) as vscode.LanguageModelChatTool[];
+        // Two-stage selection:
+        //   1. Drop everything the role's own allow-list rejects.
+        //   2. Hand the survivors to the shared selector so the interactive-UI
+        //      denylist + the model-side 128-tool cap apply uniformly across
+        //      every surface (chat, Telegram, agents).
+        const roleAllowed = vscode.lm.tools.filter(t => def.allowsTool(t.name));
+        const tools = selectAutonomousTools(roleAllowed);
 
         const systemPrompt = `${def.systemPrompt}
 

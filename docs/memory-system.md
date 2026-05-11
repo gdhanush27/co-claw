@@ -116,14 +116,29 @@ When you send a message, CoClaw recalls the most relevant memories and injects t
 
 Results are fitted within a token budget (default: 20% of the model's context window).
 
+## Workspace Isolation
+
+Memories are tagged with the originating workspace ID via a `ws:<id>` tag.
+During recall and listing, entries that carry a `ws:` tag for a *different*
+workspace are filtered out, so a project's notes never bleed into an
+unrelated repository. Entries with no `ws:` tag (legacy or imported data)
+remain visible everywhere — pin or re-tag them if you want stricter scoping.
+
+This applies uniformly to:
+
+- Auto-extracted entries (daily log)
+- Distilled long-term entries
+- Manually-written entries via `CoClaw_write_memory`
+
 ## Distillation
 
 Distillation consolidates daily logs into curated long-term memories. It:
 
 1. Collects recent daily log entries.
-2. Uses the model to summarize, deduplicate, and prioritize.
-3. Stores the result as long-term entries with source `distilled`.
-4. Automatically deduplicates the long-term store afterward.
+2. **Batches** them into ~12k-character chunks so an active workspace doesn't blow past the model's input window.
+3. Uses the model to summarize, deduplicate, and prioritize each batch (input is fenced as untrusted data to mitigate prompt injection).
+4. Stores the result as long-term entries with source `distilled`, tagged with the current workspace.
+5. Automatically deduplicates the long-term store afterward.
 
 **Trigger distillation manually:**
 

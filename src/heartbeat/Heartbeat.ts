@@ -3,6 +3,7 @@ import { ModelManager } from '../lm/ModelManager';
 import { PromptBuilder } from '../lm/PromptBuilder';
 import { MemoryEngine } from '../memory/MemoryEngine';
 import { WorkspaceMemory } from '../memory/WorkspaceMemory';
+import { Logger } from '../util/Logger';
 
 const HEARTBEAT_OK = 'HEARTBEAT_OK';
 
@@ -29,6 +30,7 @@ const DEFAULT_HEARTBEAT_MD = `# Heartbeat Checklist
  */
 export class Heartbeat {
     private timer: ReturnType<typeof setInterval> | undefined;
+    private initialTimer: ReturnType<typeof setTimeout> | undefined;
     private running = false;
     private lastHeartbeatTime = 0;
 
@@ -77,8 +79,11 @@ export class Heartbeat {
 
         this.running = true;
 
-        // Run first heartbeat after a short delay (give the system time to settle)
-        setTimeout(() => {
+        // Run first heartbeat after a short delay (give the system time to settle).
+        // Track the handle so stop() can cancel a pending first tick — otherwise
+        // a quick start/stop sequence still fires a stray heartbeat 30s later.
+        this.initialTimer = setTimeout(() => {
+            this.initialTimer = undefined;
             if (this.running) { this.tick(); }
         }, 30_000); // 30 seconds initial delay
 
@@ -92,6 +97,10 @@ export class Heartbeat {
      */
     stop(): void {
         this.running = false;
+        if (this.initialTimer) {
+            clearTimeout(this.initialTimer);
+            this.initialTimer = undefined;
+        }
         if (this.timer) {
             clearInterval(this.timer);
             this.timer = undefined;
@@ -122,8 +131,7 @@ export class Heartbeat {
                 await WorkspaceMemory.appendToDailyLog(`💓 Heartbeat finding: ${result.substring(0, 200)}`);
             }
         } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            console.error(`[CoClaw Heartbeat] Error: ${msg}`);
+            Logger.error('CoClaw Heartbeat', 'Tick failed', err);
         }
     }
 
@@ -182,8 +190,7 @@ export class Heartbeat {
                 tokenSource.dispose();
             }
         } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            console.error(`[CoClaw Heartbeat] LLM error: ${msg}`);
+            Logger.error('CoClaw Heartbeat', 'LLM error', err);
             return HEARTBEAT_OK; // Don't spam the user with errors
         }
     }
@@ -233,14 +240,41 @@ ${heartbeatMd.trim()}
 
     /**
      * Check if the current time is within configured active hours.
+     *
+     * Honors `CoClaw.heartbeat.timezone` if it parses as a valid IANA zone;
+     * otherwise falls back to the host's local time. This lets a user run a
+     * cloud-hosted CoClaw on UTC and still scope heartbeats to their own
+     * waking hours.
      */
     private isWithinActiveHours(): boolean {
         const config = vscode.workspace.getConfiguration('CoClaw.heartbeat');
         const startStr = config.get<string>('activeHoursStart', '08:00');
         const endStr = config.get<string>('activeHoursEnd', '22:00');
+        const tz = config.get<string>('timezone', '').trim();
 
         const now = new Date();
-        const currentMinutes = now.getHours() * 60 + now.getMinutes();
+        let currentHour: number;
+        let currentMin: number;
+        if (tz) {
+            try {
+                const fmt = new Intl.DateTimeFormat('en-GB', {
+                    timeZone: tz,
+                    hour12: false,
+                    hour: '2-digit',
+                    minute: '2-digit',
+                });
+                const parts = fmt.formatToParts(now);
+                currentHour = Number(parts.find(p => p.type === 'hour')?.value ?? '0');
+                currentMin = Number(parts.find(p => p.type === 'minute')?.value ?? '0');
+            } catch {
+                currentHour = now.getHours();
+                currentMin = now.getMinutes();
+            }
+        } else {
+            currentHour = now.getHours();
+            currentMin = now.getMinutes();
+        }
+        const currentMinutes = currentHour * 60 + currentMin;
 
         const [startH, startM] = startStr.split(':').map(Number);
         const [endH, endM] = endStr.split(':').map(Number);

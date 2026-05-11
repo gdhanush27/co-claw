@@ -21,6 +21,9 @@ import {
     readSettingValue,
     writeValue,
 } from './TelegramSettingsUi';
+import { inlineCodeFromUserText } from './TelegramFormatting';
+import { getAutonomousTools } from '../lm/toolFilter';
+import { Logger } from '../util/Logger';
 import { StatusBar } from '../ui/statusBar';
 
 /**
@@ -58,13 +61,21 @@ class DualStream {
         }
     }
 
-    /** Send any new buffered text to Telegram as a separate message. */
-    async flush(): Promise<void> {
+    /**
+     * Send any new buffered text to Telegram as a separate message.
+     *
+     * Mid-stream we suppress trivially short fragments (< 3 trimmed chars) to
+     * avoid spamming the user with one-character messages between fast tool
+     * calls. The `force` flag bypasses that threshold; pass it from
+     * `finalize()` so a short final answer like "Ok" still reaches the user.
+     */
+    async flush(force = false): Promise<void> {
         if (!this.onFlush) { return; }
         const all = this.parts.join('');
         const pending = all.slice(this.sentLength);
-        // Only flush if we have non-trivial new content (avoid spammy fragments).
-        if (pending.trim().length < 3) { return; }
+        const trimmedLen = pending.trim().length;
+        if (trimmedLen === 0) { return; }
+        if (!force && trimmedLen < 3) { return; }
         this.sentLength = all.length;
         try {
             await this.onFlush(pending);
@@ -77,7 +88,7 @@ class DualStream {
     /** Wait for any in-flight flush, then send the final remainder. */
     async finalize(): Promise<void> {
         try { await this.flushing; } catch { /* ignore */ }
-        await this.flush();
+        await this.flush(true);
     }
 
     hasSentAnything(): boolean {
@@ -240,7 +251,10 @@ export class TelegramBot {
                 `✅ Telegram bridge connected\n` +
                 `✅ Workspace memory (MEMORY.md + daily logs)\n` +
                 `✅ Heartbeat system active\n\n` +
-                `Send messages in Telegram — full agentic mode with proactive monitoring.\n\n---\n\n`;
+                `Send messages in Telegram — full agentic mode with proactive monitoring.\n\n` +
+                `> 💡 **Don't forget to enable bypass approvals** in your VS Code chat tool settings ` +
+                `for a smoother experience — otherwise every tool call pauses waiting for you to click ` +
+                `"Continue" inside VS Code, which defeats the point of remoting in via Telegram.\n\n---\n\n`;
             stream?.markdown(startMsg);
 
             // Start heartbeat
@@ -268,7 +282,11 @@ export class TelegramBot {
             // Log session start to workspace daily log
             await WorkspaceMemory.appendToDailyLog(`🦞 OpenClaw session started (bot: ${botName})`);
         } else {
-            const startMsg = `🐾 **CoClaw Telegram bot connected as ${botName}**\n\nSend messages to your bot in Telegram — responses will appear here and in Telegram.\n\n---\n\n`;
+            const startMsg = `🐾 **CoClaw Telegram bot connected as ${botName}**\n\n` +
+                `Send messages to your bot in Telegram — responses will appear here and in Telegram.\n\n` +
+                `> 💡 **Don't forget to enable bypass approvals** in your VS Code chat tool settings ` +
+                `for a smoother experience — otherwise every tool call pauses waiting for you to click ` +
+                `"Continue" inside VS Code.\n\n---\n\n`;
             stream?.markdown(startMsg);
         }
 
@@ -344,8 +362,7 @@ export class TelegramBot {
                 }
             } catch (err) {
                 if (!this.polling) { break; }
-                const msg = err instanceof Error ? err.message : String(err);
-                console.error(`[CoClaw Telegram] Poll error: ${msg}`);
+                Logger.warn('CoClaw Telegram', `Poll error: ${err instanceof Error ? err.message : String(err)}`);
                 await this.sleep(5000);
             }
         }
@@ -365,9 +382,26 @@ export class TelegramBot {
         const msg = update.message;
         if (!msg?.text || !msg.from) { return; }
 
-        // Security: only respond to the authorized user
+        // Channel posts arrive as message updates with chat.type === 'channel'
+        // and no `from` field (we already short-circuited on `!msg.from`), or
+        // with a bot/anonymous-channel sender id that doesn't match the
+        // authorized user. Either way they should be ignored silently — sending
+        // an "Unauthorized" reply into a channel is noisy and traps the bot
+        // in a loop if anyone forwards a message back.
+        if (msg.chat.type === 'channel' || msg.chat.type === 'channel_post') {
+            return;
+        }
+
+        // Security: only respond to the authorized user. By default we
+        // reply once with an explanation; users running the bot in shared
+        // groups can flip CoClaw.telegram.silentUnauthorized to suppress
+        // those replies entirely (avoids leaking the bot's existence).
         if (msg.from.id !== authorizedUserId) {
-            await this.api?.sendMessage(msg.chat.id, '⛔ Unauthorized. This bot is linked to a specific user.');
+            const silent = vscode.workspace.getConfiguration('CoClaw.telegram')
+                .get<boolean>('silentUnauthorized', false);
+            if (!silent) {
+                await this.api?.sendMessage(msg.chat.id, '⛔ Unauthorized. This bot is linked to a specific user.');
+            }
             return;
         }
 
@@ -429,29 +463,30 @@ export class TelegramBot {
         }
         if (text === '/help') {
             const helpLines = [
-                '🐾 *CoClaw Telegram Commands*',
+                '🐾 **CoClaw Telegram Commands**',
                 '',
                 'Just send any message — full agentic mode with all tools.',
-                '/status — Show connection status',
-                '/clear — Clear conversation history',
-                '/stop — Stop the Telegram bridge',
-                '/memory — Show memory summary',
-                '/settings — Open interactive settings UI (alias: /s)',
+                '',
+                '`/status` — Show connection status',
+                '`/clear` — Clear conversation history',
+                '`/stop` — Stop the Telegram bridge',
+                '`/memory` — Show memory summary',
+                '`/settings` — Open interactive settings UI (alias: `/s`)',
             ];
             if (this._openMode) {
                 helpLines.push(
-                    '/cron — Open cron control panel',
-                    '/heartbeat — Force a heartbeat check now',
-                    '/heartbeat on — Enable heartbeat',
-                    '/heartbeat off — Disable heartbeat',
-                    '/cron list — Open cron control panel',
-                    '/cron add <schedule> <name> | <prompt> — Add a job',
-                    '/cron delete <name> — Delete a job',
-                    '/cron pause <name> — Pause a job',
-                    '/cron resume <name> — Resume a job',
+                    '`/cron` — Open cron control panel',
+                    '`/heartbeat` — Force a heartbeat check now',
+                    '`/heartbeat on` — Enable heartbeat',
+                    '`/heartbeat off` — Disable heartbeat',
+                    '`/cron list` — Open cron control panel',
+                    '`/cron add <schedule> <name> | <prompt>` — Add a job',
+                    '`/cron delete <name>` — Delete a job',
+                    '`/cron pause <name>` — Pause a job',
+                    '`/cron resume <name>` — Resume a job',
                 );
             }
-            helpLines.push('/help — This message');
+            helpLines.push('`/help` — This message');
             const help = helpLines.join('\n');
             await this.api!.sendMessage(chatId, help);
             this.vscodeStream?.markdown(`> **Telegram:** /help\n\n${help}\n\n---\n\n`);
@@ -518,9 +553,7 @@ export class TelegramBot {
             // Full tool access — but strip out tools that require interactive UI
             // confirmation (browser/preview/simple-browser/etc). In Telegram there's
             // no way to click "Share existing tab?" so those tools just hang the run.
-            const tools = vscode.lm.tools
-                .filter(t => !isInteractiveUiTool(t.name))
-                .map(t => t as vscode.LanguageModelChatTool);
+            const tools = getAutonomousTools();
 
             const tokenSource = new vscode.CancellationTokenSource();
             const token = tokenSource.token;
@@ -617,31 +650,31 @@ export class TelegramBot {
         const model = await this.modelManager.getActiveModel().catch(() => null);
 
         const statusLines = [
-            '🐾 CoClaw Status',
+            '🐾 **CoClaw Status**',
             '',
-            `Mode: ${this._openMode ? '🦞 OpenClaw (/open)' : '📡 Auto (/auto)'}`,
-            `Model: ${model?.name ?? 'unavailable'}`,
-            `Long-term memories: ${longterm.length}`,
-            `Today's log entries: ${daily.length}`,
-            `Conversation turns: ${Math.floor(this.conversationHistory.length / 2)}`,
-            `Tools available: ${vscode.lm.tools.length}`,
+            `**Mode:** ${this._openMode ? '🦞 OpenClaw (`/open`)' : '📡 Auto (`/auto`)'}`,
+            `**Model:** ${model?.name ?? '_unavailable_'}`,
+            `**Long-term memories:** ${longterm.length}`,
+            `**Today's log entries:** ${daily.length}`,
+            `**Conversation turns:** ${Math.floor(this.conversationHistory.length / 2)}`,
+            `**Tools available:** ${vscode.lm.tools.length}`,
         ];
 
         if (this._openMode && this.heartbeat) {
             const hbStatus = this.heartbeat.getStatus();
             statusLines.push('');
-            statusLines.push(`Heartbeat: ${hbStatus.running ? '✅ Active' : '⏸️ Paused'}`);
-            statusLines.push(`Interval: ${hbStatus.intervalMinutes}m`);
+            statusLines.push(`**Heartbeat:** ${hbStatus.running ? '✅ Active' : '⏸️ Paused'}`);
+            statusLines.push(`**Interval:** ${hbStatus.intervalMinutes}m`);
             if (hbStatus.lastCheck > 0) {
                 const ago = Math.round((Date.now() - hbStatus.lastCheck) / 60000);
-                statusLines.push(`Last check: ${ago}m ago`);
+                statusLines.push(`**Last check:** ${ago}m ago`);
             }
             const hasMemoryMd = await WorkspaceMemory.memoryMdExists();
-            statusLines.push(`MEMORY.md: ${hasMemoryMd ? '✅' : '❌ not found'}`);
+            statusLines.push(`**MEMORY.md:** ${hasMemoryMd ? '✅' : '❌ not found'}`);
 
             if (this.cronScheduler) {
                 const jobs = this.cronScheduler.getJobs();
-                statusLines.push(`Cron jobs: ${jobs.length} (${jobs.filter(j => j.enabled).length} active)`);
+                statusLines.push(`**Cron jobs:** ${jobs.length} (${jobs.filter(j => j.enabled).length} active)`);
             }
         }
 
@@ -652,25 +685,25 @@ export class TelegramBot {
 
     private async sendMemorySummary(chatId: number): Promise<void> {
         const { daily, longterm } = await this.memoryEngine.getAllMemories();
-        const lines: string[] = ['🧠 CoClaw Memory', ''];
+        const lines: string[] = ['🧠 **CoClaw Memory**', ''];
 
         if (longterm.length > 0) {
-            lines.push(`Long-Term (${longterm.length}):`);
+            lines.push(`**Long-Term (${longterm.length}):**`);
             for (const entry of longterm.slice(0, 15)) {
-                lines.push(`• [${entry.type}] ${entry.content.substring(0, 100)}`);
+                lines.push(`- \`${entry.type}\` ${entry.content.substring(0, 100)}`);
             }
             if (longterm.length > 15) {
-                lines.push(`...and ${longterm.length - 15} more`);
+                lines.push(`_…and ${longterm.length - 15} more_`);
             }
         } else {
-            lines.push('No long-term memories yet.');
+            lines.push('_No long-term memories yet._');
         }
 
         lines.push('');
         if (daily.length > 0) {
-            lines.push(`Today's Log (${daily.length}):`);
+            lines.push(`**Today's Log (${daily.length}):**`);
             for (const entry of daily.slice(0, 10)) {
-                lines.push(`• [${entry.type}] ${entry.content.substring(0, 100)}`);
+                lines.push(`- \`${entry.type}\` ${entry.content.substring(0, 100)}`);
             }
         }
 
@@ -722,7 +755,13 @@ export class TelegramBot {
                 try {
                     const job = await this.cronScheduler.addJob(proposal.name, proposal.schedule, proposal.prompt);
                     const scheduleDesc = job.cron ?? (job.fireAt ? new Date(job.fireAt).toLocaleTimeString() : 'unknown');
-                    const confirmText = `✅ Cron job created!\n\nName: ${job.name}\nSchedule: ${scheduleDesc}\nPrompt: ${job.prompt}`;
+                    const confirmText = [
+                        '✅ **Cron job created!**',
+                        '',
+                        `**Name:** ${job.name}`,
+                        `**Schedule:** \`${scheduleDesc}\``,
+                        `**Prompt:** ${job.prompt}`,
+                    ].join('\n');
                     await this.api?.answerCallbackQuery(query.id, '✅ Created!');
                     if (chatId && messageId) {
                         await this.api?.editMessageText(chatId, messageId, confirmText);
@@ -781,7 +820,13 @@ export class TelegramBot {
             }, 5 * 60 * 1000);
 
             // Send confirmation message with inline buttons
-            const confirmMsg = `⏰ Schedule cron job?\n\nName: ${name}\nSchedule: ${schedule}\nTask: ${prompt}`;
+            const confirmMsg = [
+                '⏰ **Schedule cron job?**',
+                '',
+                `**Name:** ${name}`,
+                `**Schedule:** \`${schedule}\``,
+                `**Task:** ${prompt}`,
+            ].join('\n');
             const buttons = [
                 [
                     { text: '✅ Yes, create it', callback_data: `cron_yes:${proposalId}` },
@@ -820,11 +865,11 @@ export class TelegramBot {
             const pipeIdx = rest.indexOf('|');
             if (pipeIdx === -1) {
                 await this.api!.sendMessage(chatId,
-                    '❌ Format: /cron add <schedule> <name> | <prompt>\n\n' +
-                    'Examples:\n' +
-                    '• /cron add 0 7 * * * Morning briefing | Summarize inbox and calendar\n' +
-                    '• /cron add 20m Reminder | Check if the build passed\n' +
-                    '• /cron add 0 */2 * * * Health check | Check if the server is up'
+                    '❌ **Format:** `/cron add <schedule> <name> | <prompt>`\n\n' +
+                    '**Examples:**\n' +
+                    '- `/cron add 0 7 * * * Morning briefing | Summarize inbox and calendar`\n' +
+                    '- `/cron add 20m Reminder | Check if the build passed`\n' +
+                    '- `/cron add 0 */2 * * * Health check | Check if the server is up`'
                 );
                 return;
             }
@@ -833,7 +878,7 @@ export class TelegramBot {
             const prompt = rest.substring(pipeIdx + 1).trim();
 
             if (!prompt) {
-                await this.api!.sendMessage(chatId, '❌ Prompt is required after the | separator.');
+                await this.api!.sendMessage(chatId, '❌ Prompt is required after the `|` separator.');
                 return;
             }
 
@@ -845,8 +890,8 @@ export class TelegramBot {
             if (!schedule || !name) {
                 await this.api!.sendMessage(chatId,
                     '❌ Could not parse schedule and name.\n\n' +
-                    'Format: /cron add <schedule> <name> | <prompt>\n' +
-                    'Schedule can be a cron expression (5 fields) or relative time (20m, 1h, etc.)'
+                    '**Format:** `/cron add <schedule> <name> | <prompt>`\n' +
+                    'Schedule can be a cron expression (5 fields) or relative time (`20m`, `1h`, etc.)'
                 );
                 return;
             }
@@ -854,7 +899,13 @@ export class TelegramBot {
             try {
                 const job = await this.cronScheduler.addJob(name, schedule, prompt);
                 const scheduleDesc = job.cron ?? (job.fireAt ? `fires at ${new Date(job.fireAt).toLocaleTimeString()}` : 'unknown');
-                const reply = `✅ Cron job created!\n\nName: ${job.name}\nSchedule: ${scheduleDesc}\nPrompt: ${job.prompt}`;
+                const reply = [
+                    '✅ **Cron job created!**',
+                    '',
+                    `**Name:** ${job.name}`,
+                    `**Schedule:** \`${scheduleDesc}\``,
+                    `**Prompt:** ${job.prompt}`,
+                ].join('\n');
                 await this.api!.sendMessage(chatId, reply);
                 this.vscodeStream?.markdown(`> **Telegram:** ${text}\n\n${reply}\n\n---\n\n`);
             } catch (err) {
@@ -876,11 +927,11 @@ export class TelegramBot {
             const nameOrId = args.replace(/^(pause|disable|off)\s+/i, '').trim();
             const job = this.cronScheduler.getJob(nameOrId) ?? this.cronScheduler.findJobByName(nameOrId);
             if (!job) {
-                await this.api!.sendMessage(chatId, `❌ Job not found: "${nameOrId}"`);
+                await this.api!.sendMessage(chatId, `❌ Job not found: ${inlineCodeFromUserText(nameOrId)}`);
                 return;
             }
             await this.cronScheduler.toggleJob(job.id, false);
-            await this.api!.sendMessage(chatId, `⏸️ Paused job: ${job.name}`);
+            await this.api!.sendMessage(chatId, `⏸️ Paused job: **${job.name}**`);
             return;
         }
 
@@ -889,26 +940,26 @@ export class TelegramBot {
             const nameOrId = args.replace(/^(resume|enable|on)\s+/i, '').trim();
             const job = this.cronScheduler.getJob(nameOrId) ?? this.cronScheduler.findJobByName(nameOrId);
             if (!job) {
-                await this.api!.sendMessage(chatId, `❌ Job not found: "${nameOrId}"`);
+                await this.api!.sendMessage(chatId, `❌ Job not found: ${inlineCodeFromUserText(nameOrId)}`);
                 return;
             }
             await this.cronScheduler.toggleJob(job.id, true);
-            await this.api!.sendMessage(chatId, `▶️ Resumed job: ${job.name}`);
+            await this.api!.sendMessage(chatId, `▶️ Resumed job: **${job.name}**`);
             return;
         }
 
         // Unknown sub-command
         await this.api!.sendMessage(chatId,
-            '📋 Cron commands:\n\n' +
-            '/cron — Open cron control panel\n' +
-            '/cron list — Open cron control panel\n' +
-            '/cron add <schedule> <name> | <prompt> — Add a job\n' +
-            '/cron delete <name> — Delete a job\n' +
-            '/cron pause <name> — Pause a job\n' +
-            '/cron resume <name> — Resume a job\n\n' +
-            'Schedule can be:\n' +
-            '• Cron expression: 0 7 * * * (every day at 7am)\n' +
-            '• Relative time: 20m, 1h, 2h30m (one-shot)\n'
+            '📋 **Cron commands:**\n\n' +
+            '- `/cron` — Open cron control panel\n' +
+            '- `/cron list` — Open cron control panel\n' +
+            '- `/cron add <schedule> <name> | <prompt>` — Add a job\n' +
+            '- `/cron delete <name>` — Delete a job\n' +
+            '- `/cron pause <name>` — Pause a job\n' +
+            '- `/cron resume <name>` — Resume a job\n\n' +
+            '**Schedule can be:**\n' +
+            '- Cron expression: `0 7 * * *` (every day at 7am)\n' +
+            '- Relative time: `20m`, `1h`, `2h30m` (one-shot)\n'
         );
     }
 
@@ -962,7 +1013,7 @@ export class TelegramBot {
             if (facts.length > 0) {
                 const synced = await WorkspaceMemory.syncFactsToMemoryMd(facts);
                 if (synced > 0) {
-                    console.log(`[CoClaw] Synced ${synced} facts to MEMORY.md`);
+                    Logger.info('CoClaw', `Synced ${synced} facts to MEMORY.md`);
                 }
             }
         } catch {
@@ -1020,23 +1071,23 @@ export class TelegramBot {
         const job = this.cronScheduler.getJob(nameOrId);
         if (job) {
             await this.cronScheduler.deleteJob(job.id);
-            await this.api!.sendMessage(chatId, `🗑️ Deleted job: ${job.name}`);
+            await this.api!.sendMessage(chatId, `🗑️ Deleted job: **${job.name}**`);
             this.vscodeStream?.markdown(`> **Telegram:** ${originalText}\n\nDeleted cron job: ${job.name}\n\n---\n\n`);
             return;
         }
 
         const matches = this.cronScheduler.findJobsByName(nameOrId);
         if (matches.length === 0) {
-            await this.api!.sendMessage(chatId, `❌ Job not found: "${nameOrId}"`);
+            await this.api!.sendMessage(chatId, `❌ Job not found: ${inlineCodeFromUserText(nameOrId)}`);
             return;
         }
 
         const hasExactMatch = matches.some(jobMatch => jobMatch.name.toLowerCase() === nameOrId.toLowerCase());
         if (!hasExactMatch && matches.length > 1) {
-            const options = matches.map(jobMatch => `• ${jobMatch.name} (${jobMatch.id})`).join('\n');
+            const options = matches.map(jobMatch => `- **${jobMatch.name}** \`${jobMatch.id}\``).join('\n');
             await this.api!.sendMessage(
                 chatId,
-                `❌ Multiple jobs match "${nameOrId}". Use a more exact name or the job id:\n\n${options}`,
+                `❌ Multiple jobs match ${inlineCodeFromUserText(nameOrId)}. Use a more exact name or the job id:\n\n${options}`,
             );
             return;
         }
@@ -1046,8 +1097,8 @@ export class TelegramBot {
         }
 
         const reply = matches.length === 1
-            ? `🗑️ Deleted job: ${matches[0].name}`
-            : `🗑️ Deleted ${matches.length} jobs named "${matches[0].name}"`;
+            ? `🗑️ Deleted job: **${matches[0].name}**`
+            : `🗑️ Deleted ${matches.length} jobs named **${matches[0].name}**`;
         await this.api!.sendMessage(chatId, reply);
         this.vscodeStream?.markdown(`> **Telegram:** ${originalText}\n\n${reply}\n\n---\n\n`);
     }
@@ -1171,7 +1222,7 @@ export class TelegramBot {
                         return;
                     }
                     this.pendingSettingInput.set(chatId, args);
-                    const prompt = `⌨ Send the new value for <b>${setting.label}</b> as your next message.\nSend <code>/cancel</code> to abort.`;
+                    const prompt = `⌨ Send the new value for **${setting.label}** as your next message.\nSend \`/cancel\` to abort.`;
                     await this.api?.sendMessage(chatId, prompt);
                     await this.api?.answerCallbackQuery(callbackQueryId, 'Send a value...');
                     return;
@@ -1204,7 +1255,13 @@ export class TelegramBot {
 
         const value = coerceValue(setting, text);
         if (value === undefined && setting.type !== 'string') {
-            await this.api!.sendMessage(chatId, `⚠️ "${text}" is not a valid value for <b>${setting.label}</b>. Try again or send /cancel.`);
+            // Wrap user input as a literal <code> snippet so backticks, `<`,
+            // `&`, etc. inside the typed value can't break the surrounding
+            // markdown/HTML rendering.
+            await this.api!.sendMessage(
+                chatId,
+                `⚠️ ${inlineCodeFromUserText(text)} is not a valid value for **${setting.label}**. Try again or send \`/cancel\`.`,
+            );
             return;
         }
 
@@ -1384,25 +1441,5 @@ const ALLOWED_REACTION_EMOJIS = [
     '💊', '🙊', '😎', '👾', '🤷‍♂', '🤷', '🤷‍♀', '😡',
 ];
 
-/**
- * Tools that pop up a VS Code UI prompt (e.g. "Share an existing browser tab?")
- * and therefore can't run in Telegram /open mode — filter them out before
- * handing the tool list to the model. Match by substring (case-insensitive)
- * so we catch vendor-prefixed variants like `vscode_open_simple_browser`,
- * `copilot_openSimpleBrowser`, etc.
- */
-const INTERACTIVE_UI_TOOL_PATTERNS = [
-    'simple_browser', 'simplebrowser',
-    'open_browser', 'openbrowser', 'browser_page', 'browserpage',
-    'live_preview', 'livepreview',
-    'open_preview', 'openpreview',
-    'webview', 'web_view',
-    'screenshot',
-    'click_element', 'fill_form',
-    'open_terminal', 'openterminal',
-];
-
-function isInteractiveUiTool(name: string): boolean {
-    const n = name.toLowerCase();
-    return INTERACTIVE_UI_TOOL_PATTERNS.some(p => n.includes(p));
-}
+// Interactive-UI tool detection lives in `src/lm/toolFilter.ts` so the chat
+// participant and the multi-agent runner can share the same denylist.

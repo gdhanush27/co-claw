@@ -74,6 +74,21 @@ All CoClaw settings are under the `CoClaw.*` namespace. Open them quickly with *
 - **Defaults:** `"08:00"` / `"22:00"`
 - **Description:** Heartbeats only fire inside this window.
 
+### `CoClaw.heartbeat.timezone`
+
+- **Type:** string (IANA zone)
+- **Default:** `""`
+- **Description:** Optional IANA time zone (e.g. `Asia/Kolkata`, `America/New_York`) used to evaluate active hours. Useful when CoClaw runs on a server set to UTC but you want heartbeats to follow your local clock. Leave empty to use the host's local time.
+
+## Logging
+
+### `CoClaw.logging.level`
+
+- **Type:** string (enum)
+- **Default:** `"error"`
+- **Allowed:** `off`, `error`, `warn`, `info`, `debug`
+- **Description:** Verbosity of the **CoClaw** output channel (View → Output → CoClaw). Bump to `info` to see lifecycle events; bump to `debug` when filing a bug so the channel captures full traces.
+
 ## Telegram Settings
 
 ### `CoClaw.telegram.tone`
@@ -95,6 +110,12 @@ All CoClaw settings are under the `CoClaw.*` namespace. Open them quickly with *
 - **Default:** `true`
 - **Description:** When enabled (and `useEmojis` is on), each user message in `/open` mode gets a sarcastic emoji reaction.
 
+### `CoClaw.telegram.silentUnauthorized`
+
+- **Type:** boolean
+- **Default:** `false`
+- **Description:** When `true`, messages from non-linked users are dropped silently instead of receiving an `⛔ Unauthorized` reply. Useful if your bot is added to shared chats and you don't want to advertise its presence.
+
 ## Multi-Agent Settings
 
 ### `CoClaw.agents.mode`
@@ -110,6 +131,49 @@ All CoClaw settings are under the `CoClaw.*` namespace. Open them quickly with *
 - **Default:** `4`
 - **Range:** 1–8
 - **Description:** Maximum number of coder agents that may run in parallel during a `/agents` run.
+
+## Tool-Selection Settings
+
+These settings control which tools CoClaw forwards to the language model on every request. They apply uniformly across the chat participant, the Telegram bridge, and the multi-agent orchestrator.
+
+### `CoClaw.tools.maxPerRequest`
+
+- **Type:** integer
+- **Default:** `120`
+- **Range:** 1–256
+- **Description:** Hard ceiling on tool count per LM request. Most providers (OpenAI, Gemini) reject requests carrying more than 128 tools with `Cannot have more than 128 tools per request`. The default 120 leaves an 8-tool headroom for any platform-injected tools. Lower this if your model is stricter (some Anthropic-routed setups cap at 64).
+- **Selection order when the cap is hit:**
+    1. Tools matched by `CoClaw.tools.priority` (user-pinned).
+    2. Tools whose name starts with `CoClaw_` (memory, telegram, etc.).
+    3. Common file/edit/search/terminal tools (`read_file`, `apply_patch`, `grep`, `codebase`, …).
+    4. Everything else, sorted alphabetically for deterministic cache hits.
+- A `warn`-level entry is written to the **CoClaw** output channel listing the first 10 dropped tool names whenever the cap kicks in.
+
+### `CoClaw.tools.exclude`
+
+- **Type:** string array
+- **Default:** `[]`
+- **Description:** Case-insensitive substring patterns. Any tool whose name contains a listed pattern is dropped before the request reaches the model. Use this to mute noisy MCP servers or extension tools you never want the assistant to call.
+- **Examples:**
+
+```json
+{
+  "CoClaw.tools.exclude": ["mssql", "jupyter", "preview"]
+}
+```
+
+### `CoClaw.tools.priority`
+
+- **Type:** string array
+- **Default:** `[]`
+- **Description:** Case-insensitive substring patterns. Matching tools are bumped to the top tier so they survive the per-request cap even when the registry is huge. Use sparingly — `CoClaw_*` tools are already auto-prioritized; you only need this for niche third-party tools you can't afford to lose.
+- **Example:**
+
+```json
+{
+  "CoClaw.tools.priority": ["github_pr", "k8s_apply"]
+}
+```
 
 ## Recommended Configurations
 

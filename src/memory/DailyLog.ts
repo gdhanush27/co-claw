@@ -1,12 +1,17 @@
 import * as vscode from 'vscode';
 import { DailyLogFile, MemoryEntry } from './types';
 import { randomUUID } from 'crypto';
+import { withLock } from './fileLock';
 
 export class DailyLog {
     constructor(private readonly storageUri: vscode.Uri) {}
 
     private getLogUri(date: string): vscode.Uri {
         return vscode.Uri.joinPath(this.storageUri, 'memory', `${date}.json`);
+    }
+
+    private getLockKey(date: string): string {
+        return `daily:${this.getLogUri(date).toString()}`;
     }
 
     private getTodayDate(): string {
@@ -42,18 +47,18 @@ export class DailyLog {
 
     async addEntry(entry: Omit<MemoryEntry, 'id' | 'createdAt' | 'lastUsedAt'>): Promise<MemoryEntry> {
         const today = this.getTodayDate();
-        const log = await this.readLog(today);
-
-        const full: MemoryEntry = {
-            id: randomUUID(),
-            createdAt: Date.now(),
-            lastUsedAt: Date.now(),
-            ...entry,
-        };
-
-        log.entries.push(full);
-        await this.writeLog(log);
-        return full;
+        return withLock(this.getLockKey(today), async () => {
+            const log = await this.readLog(today);
+            const full: MemoryEntry = {
+                id: randomUUID(),
+                createdAt: Date.now(),
+                lastUsedAt: Date.now(),
+                ...entry,
+            };
+            log.entries.push(full);
+            await this.writeLog(log);
+            return full;
+        });
     }
 
     async getTodayEntries(): Promise<MemoryEntry[]> {
@@ -96,13 +101,15 @@ export class DailyLog {
 
             for (const [name] of dailyFiles) {
                 const date = name.replace('.json', '');
-                const log = await this.readLog(date);
-                const idx = log.entries.findIndex(e => e.id === entryId);
-                if (idx !== -1) {
+                const deleted = await withLock(this.getLockKey(date), async () => {
+                    const log = await this.readLog(date);
+                    const idx = log.entries.findIndex(e => e.id === entryId);
+                    if (idx === -1) { return false; }
                     log.entries.splice(idx, 1);
                     await this.writeLog(log);
                     return true;
-                }
+                });
+                if (deleted) { return true; }
             }
         } catch {
             // ignore
@@ -117,7 +124,9 @@ export class DailyLog {
             for (const [name] of files) {
                 if (/^\d{4}-\d{2}-\d{2}\.json$/.test(name)) {
                     const date = name.replace('.json', '');
-                    await this.writeLog({ date, entries: [] });
+                    await withLock(this.getLockKey(date), async () => {
+                        await this.writeLog({ date, entries: [] });
+                    });
                 }
             }
         } catch {

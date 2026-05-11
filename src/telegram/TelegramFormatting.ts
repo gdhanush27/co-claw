@@ -6,7 +6,35 @@ interface OpenTag {
 }
 
 const SAFE_SPLIT_OVERHEAD = 96;
-const TOKEN_REGEX = /(<\/?(?:b|i|s|code|pre|a)(?:\s+href="[^"]*")?>|&(?:#\d+|#x[\da-fA-F]+|[a-zA-Z]+);|[\s\S])/g;
+
+/**
+ * Telegram-allowed HTML tags. We deliberately only support the inline tags
+ * documented at https://core.telegram.org/bots/api#html-style — anything
+ * else (e.g. <div>, <script>) gets escaped so it renders as literal text.
+ */
+const ALLOWED_TAG_NAMES = ['b', 'strong', 'i', 'em', 'u', 'ins', 's', 'strike', 'del', 'code', 'pre', 'a', 'tg-spoiler', 'blockquote'] as const;
+const ALLOWED_TAG_NAMES_PATTERN = ALLOWED_TAG_NAMES.join('|');
+
+/**
+ * Tokenizer used by both `splitTelegramHtml` (to split safely on tag boundaries)
+ * and `smartEscapeHtml` (to recognize already-valid HTML so we don't double-escape).
+ *
+ * Matches, in order: a recognized opening/closing tag (with optional attributes),
+ * a recognized HTML entity, or a single character.
+ */
+const TOKEN_REGEX = new RegExp(
+    `(<\\/?(?:${ALLOWED_TAG_NAMES_PATTERN})(?:\\s+[^<>]*)?>|&(?:#\\d+|#x[\\da-fA-F]+|[a-zA-Z]+);|[\\s\\S])`,
+    'g',
+);
+
+/**
+ * Detects a single recognized tag at the START of a string (no global flag).
+ * Used to differentiate "this `<` is part of a real tag" vs "this `<` is a
+ * stray less-than sign in the middle of plain prose".
+ */
+const SINGLE_TAG_REGEX = new RegExp(
+    `^(<\\/?(?:${ALLOWED_TAG_NAMES_PATTERN})(?:\\s+[^<>]*)?>|&(?:#\\d+|#x[\\da-fA-F]+|[a-zA-Z]+);)`,
+);
 
 export function formatTelegramHtml(markdownText: string): string {
     const normalized = markdownText.replace(/\r\n/g, '\n');
@@ -78,6 +106,38 @@ export function splitTelegramHtml(html: string, maxLength: number): string[] {
     return chunks.length > 0 ? chunks : [html];
 }
 
+/**
+ * Escape `<`, `>`, `&` only when they are NOT part of an already-valid
+ * Telegram HTML tag or HTML entity. This lets callers freely mix markdown
+ * (which we convert to HTML) with pre-built HTML snippets (which we leave
+ * alone) without worrying about double-escaping.
+ */
+export function escapeHtml(text: string): string {
+    let result = '';
+    let i = 0;
+    while (i < text.length) {
+        const remaining = text.slice(i);
+        const tagMatch = SINGLE_TAG_REGEX.exec(remaining);
+        if (tagMatch) {
+            result += tagMatch[0];
+            i += tagMatch[0].length;
+            continue;
+        }
+        const ch = text.charCodeAt(i);
+        if (ch === 0x26) { // &
+            result += '&amp;';
+        } else if (ch === 0x3c) { // <
+            result += '&lt;';
+        } else if (ch === 0x3e) { // >
+            result += '&gt;';
+        } else {
+            result += text[i];
+        }
+        i += 1;
+    }
+    return result;
+}
+
 function stashCodeSegments(text: string): { text: string; replacements: Map<string, string> } {
     const replacements = new Map<string, string>();
     let result = text;
@@ -86,13 +146,13 @@ function stashCodeSegments(text: string): { text: string; replacements: Map<stri
     result = result.replace(/```([^\n`]*)\n?([\s\S]*?)```/g, (_match, _language, code) => {
         const placeholder = `@@TG_CODE_BLOCK_${index++}@@`;
         const trimmedCode = code.replace(/^\n/, '').replace(/\n$/, '');
-        replacements.set(placeholder, `<pre>${escapeHtml(trimmedCode)}</pre>`);
+        replacements.set(placeholder, `<pre>${escapeForCodeContent(trimmedCode)}</pre>`);
         return placeholder;
     });
 
     result = result.replace(/`([^`\n]+?)`/g, (_match, code) => {
         const placeholder = `@@TG_INLINE_CODE_${index++}@@`;
-        replacements.set(placeholder, `<code>${escapeHtml(code)}</code>`);
+        replacements.set(placeholder, `<code>${escapeForCodeContent(code)}</code>`);
         return placeholder;
     });
 
@@ -134,28 +194,56 @@ function formatLine(line: string): string {
 function formatInlineMarkdown(text: string): string {
     let result = text;
 
+    // [label](url) — links must come before bold/italic so the markdown brackets
+    // aren't treated as italic markers.
     result = result.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, (_match, label, url) => {
         return `<a href="${escapeHtmlAttribute(unescapeHtml(url))}">${label}</a>`;
     });
 
+    // **bold** and __bold__
     result = result.replace(/\*\*([^\n]+?)\*\*/g, '<b>$1</b>');
     result = result.replace(/__([^\n]+?)__/g, '<b>$1</b>');
+
+    // ~~strikethrough~~
     result = result.replace(/~~([^\n]+?)~~/g, '<s>$1</s>');
-    result = result.replace(/(^|[\s(])\*([^*\n]+?)\*(?=($|[\s).,!?:;]))/g, '$1<i>$2</i>');
-    result = result.replace(/(^|[\s(])_([^_\n]+?)_(?=($|[\s).,!?:;]))/g, '$1<i>$2</i>');
+
+    // *italic* and _italic_ — require non-whitespace content between the markers
+    // so cron expressions like "0 7 * * *" or "a * b * c" don't get mangled
+    // into "0 7 <i> </i>". Pattern requires opening `*`/`_` to be immediately
+    // followed by a non-space char and the closing one to be immediately
+    // preceded by a non-space char.
+    result = result.replace(/(^|[\s(])\*(\S(?:[^*\n]*?\S)?)\*(?=$|[\s).,!?:;])/g, '$1<i>$2</i>');
+    result = result.replace(/(^|[\s(])_(\S(?:[^_\n]*?\S)?)_(?=$|[\s).,!?:;])/g, '$1<i>$2</i>');
 
     return result;
 }
 
-function escapeHtml(text: string): string {
+/**
+ * Strict escape — used for content that goes inside <code> or <pre>, where
+ * we never want to honor or preserve any HTML tags. Telegram requires `<`,
+ * `>`, and `&` to always be escaped inside code blocks.
+ */
+function escapeForCodeContent(text: string): string {
     return text
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;');
 }
 
+/**
+ * Render arbitrary user-supplied text as a literal inline `<code>` snippet.
+ * Use this when you want to embed untrusted text (e.g. a value the user
+ * just typed) inside a formatted message without it accidentally being
+ * parsed as markdown or HTML. Backticks in the input are stripped because
+ * they cannot survive an inline-code wrapper.
+ */
+export function inlineCodeFromUserText(text: string): string {
+    const safe = text.replace(/`/g, '');
+    return `<code>${escapeForCodeContent(safe)}</code>`;
+}
+
 function escapeHtmlAttribute(text: string): string {
-    return escapeHtml(text).replace(/"/g, '&quot;');
+    return escapeForCodeContent(text).replace(/"/g, '&quot;');
 }
 
 function unescapeHtml(text: string): string {
@@ -176,7 +264,7 @@ function applyTokenToStack(stack: OpenTag[], token: string): OpenTag[] {
         return nextStack;
     }
 
-    const closingMatch = token.match(/^<\/(b|i|s|code|pre|a)>$/);
+    const closingMatch = token.match(new RegExp(`^<\\/(${ALLOWED_TAG_NAMES_PATTERN})>$`));
     if (closingMatch) {
         for (let idx = nextStack.length - 1; idx >= 0; idx -= 1) {
             if (nextStack[idx].name === closingMatch[1]) {
@@ -187,7 +275,7 @@ function applyTokenToStack(stack: OpenTag[], token: string): OpenTag[] {
         return nextStack;
     }
 
-    const openingMatch = token.match(/^<(b|i|s|code|pre|a)(?:\s+href="[^"]*")?>$/);
+    const openingMatch = token.match(new RegExp(`^<(${ALLOWED_TAG_NAMES_PATTERN})(?:\\s+[^<>]*)?>$`));
     if (openingMatch) {
         nextStack.push({ name: openingMatch[1], openTag: token });
     }

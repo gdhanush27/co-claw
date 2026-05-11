@@ -76,12 +76,16 @@ These tools are used internally by the multi-agent orchestrator (`/agents`) and 
 
 ### Workspace Boundaries
 
-CoClaw blocks access to files outside the current workspace folders. All file operations are scoped.
+CoClaw blocks access to files outside the current workspace folders. All file operations are scoped — including in multi-root workspaces, where any of the registered roots is accepted.
+
+### Interactive UI Tool Filter
+
+Across every surface CoClaw drives autonomously (chat participant, Telegram bridge, multi-agent orchestrator), tools that pop up a blocking VS Code dialog — Simple Browser, Live Preview, browser screenshot/click tools, etc. — are stripped from the model's tool list. Otherwise an off-screen "Share existing tab?" prompt would silently hang the run. The shared denylist lives in `src/lm/toolFilter.ts`.
 
 ### Context Management
 
 - **Result truncation** — Tool results are capped at 16,000 characters to prevent context overflow.
-- **Context trimming** — When approaching the token limit, older tool exchanges are removed (the last 3 rounds are always kept).
+- **Context trimming** — When approaching the token limit, older tool exchanges are removed in whole assistant/user-result pairs (the last 3 rounds are always kept) so the transcript never desyncs the model.
 - **Session caching** — Duplicate tool calls within the same request return cached results.
 
 ### Loop Protection

@@ -2,7 +2,8 @@
 
 AI coding assistant with persistent memory, powered by GitHub Copilot.
 
-![Version](https://img.shields.io/badge/version-0.2.0-informational)
+![Version](https://img.shields.io/badge/version-0.2-informational)
+[![CI](https://github.com/gdhanush27/co-claw/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gdhanush27/co-claw/actions/workflows/ci.yml)
 ![VS Code](https://img.shields.io/badge/VS%20Code-1.93%2B-blue?logo=visual-studio-code)
 ![Copilot Required](https://img.shields.io/badge/Copilot-Required-orange?logo=github)
 ![License](https://img.shields.io/badge/License-Apache--2.0-green)
@@ -112,11 +113,17 @@ For full setup and remote usage details, see [docs/telegram.md](docs/telegram.md
 | `CoClaw.heartbeat.intervalMinutes` | `30` | Heartbeat interval in minutes |
 | `CoClaw.heartbeat.activeHoursStart` | `08:00` | Start of active hours for heartbeat |
 | `CoClaw.heartbeat.activeHoursEnd` | `22:00` | End of active hours for heartbeat |
+| `CoClaw.heartbeat.timezone` | `""` | IANA time zone for heartbeat active hours (`Asia/Kolkata`, etc.). Empty = host local time |
+| `CoClaw.logging.level` | `error` | Verbosity for the **CoClaw** output channel (`off`, `error`, `warn`, `info`, `debug`) |
 | `CoClaw.telegram.tone` | `sarcastic` | Conversational tone in `/open` mode (`sarcastic`, `friendly`, `professional`, `playful`, `neutral`) |
 | `CoClaw.telegram.useEmojis` | `true` | Master switch for emojis in replies and message reactions |
 | `CoClaw.telegram.sarcasticReactions` | `true` | React to each `/open` user message with a sarcastic emoji (also requires `useEmojis`) |
+| `CoClaw.telegram.silentUnauthorized` | `false` | When `true`, silently drop messages from non-linked users instead of replying with `Unauthorized` |
 | `CoClaw.agents.mode` | `slash` | Multi-agent mode: `off`, `slash` (only on `/agents`), or `always` (route every prompt) |
 | `CoClaw.agents.maxParallelCoders` | `4` | Maximum number of coder agents that may run in parallel (1–8) |
+| `CoClaw.tools.maxPerRequest` | `120` | Hard cap on tools sent per LM request. Lower this if a model rejects calls with “Cannot have more than N tools per request” (most providers cap at 128) |
+| `CoClaw.tools.exclude` | `[]` | Substring patterns; matching tool names are dropped before the request reaches the model (e.g. `["mssql", "jupyter"]`) |
+| `CoClaw.tools.priority` | `[]` | Substring patterns; matching tools are bumped above CoClaw’s own tools so they survive the per-request cap |
 
 ## Documentation
 

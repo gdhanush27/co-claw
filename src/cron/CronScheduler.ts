@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { CronJobDefinition, CronJobResult } from './CronJob';
 import { ModelManager } from '../lm/ModelManager';
 import { WorkspaceMemory } from '../memory/WorkspaceMemory';
+import { Logger } from '../util/Logger';
 
 /**
  * Cron scheduler for CoClaw /open mode.
@@ -335,7 +336,7 @@ You can ONLY access files within the current workspace folder.
 
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            console.error(`[CoClaw Cron] Job "${job.name}" failed: ${msg}`);
+            Logger.error('CoClaw Cron', `Job "${job.name}" failed`, err);
 
             // Still deliver an error notification
             if (this.onResult && this.isJobActive(job.id)) {
@@ -358,7 +359,8 @@ You can ONLY access files within the current workspace folder.
     /**
      * Check if a 5-field cron expression matches the given time.
      * Fields: minute hour day-of-month month day-of-week
-     * Supports: *, specific values, comma-separated, ranges (a-b), steps (star/n)
+     * Supports: *, specific values, comma-separated, ranges (a-b), step ranges (a-b/n),
+     *           steps (star/n), named day-of-week (SUN..SAT), and DOW=7 as Sunday.
      */
     private cronMatchesNow(cronExpr: string, now: Date): boolean {
         const fields = cronExpr.trim().split(/\s+/);
@@ -370,23 +372,61 @@ You can ONLY access files within the current workspace folder.
                this.fieldMatches(hourF, now.getHours()) &&
                this.fieldMatches(domF, now.getDate()) &&
                this.fieldMatches(monF, now.getMonth() + 1) && // cron months are 1-12
-               this.fieldMatches(dowF, now.getDay()); // 0=Sunday
+               this.fieldMatches(this.normalizeDow(dowF), now.getDay()); // 0=Sunday
     }
 
-    private fieldMatches(field: string, value: number): boolean {
+    private static readonly DOW_NAMES: Record<string, number> = {
+        SUN: 0, MON: 1, TUE: 2, WED: 3, THU: 4, FRI: 5, SAT: 6,
+    };
+
+    /**
+     * Normalize a day-of-week field. Accepts named tokens (SUN..SAT in any
+     * case) and DOW=7 which the standard treats as Sunday in addition to 0.
+     * Returns a numeric form fieldMatches() can consume against now.getDay().
+     */
+    private normalizeDow(field: string): string {
+        const replaced = field.replace(/[A-Za-z]{3}/g, m => {
+            const n = CronScheduler.DOW_NAMES[m.toUpperCase()];
+            return n === undefined ? m : String(n);
+        });
+        // Map standalone 7s (with delimiters as boundaries) to 0 for Sunday.
+        return replaced.replace(/(^|[^0-9])7(?![0-9])/g, '$10');
+    }
+
+    fieldMatches(field: string, value: number): boolean {
         if (field === '*') { return true; }
 
-        // Handle step: */n
-        if (field.startsWith('*/')) {
-            const step = parseInt(field.substring(2), 10);
-            if (!isNaN(step) && step > 0) {
-                return value % step === 0;
-            }
-        }
-
-        // Handle comma-separated values and ranges
+        // Handle comma-separated values, ranges, and step ranges
         const parts = field.split(',');
         for (const part of parts) {
+            // Step expressions: <range>/<step>, where <range> is "*", "a", or "a-b"
+            const stepIdx = part.indexOf('/');
+            if (stepIdx !== -1) {
+                const rangeStr = part.substring(0, stepIdx);
+                const step = parseInt(part.substring(stepIdx + 1), 10);
+                if (isNaN(step) || step <= 0) { continue; }
+                let start: number;
+                let end: number;
+                if (rangeStr === '*' || rangeStr === '') {
+                    start = 0;
+                    end = Number.POSITIVE_INFINITY;
+                } else if (rangeStr.includes('-')) {
+                    const [s, e] = rangeStr.split('-').map(x => parseInt(x, 10));
+                    if (isNaN(s) || isNaN(e)) { continue; }
+                    start = s;
+                    end = e;
+                } else {
+                    const s = parseInt(rangeStr, 10);
+                    if (isNaN(s)) { continue; }
+                    start = s;
+                    end = Number.POSITIVE_INFINITY;
+                }
+                if (value >= start && value <= end && (value - start) % step === 0) {
+                    return true;
+                }
+                continue;
+            }
+
             if (part.includes('-')) {
                 const [startStr, endStr] = part.split('-');
                 const start = parseInt(startStr, 10);

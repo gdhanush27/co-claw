@@ -2,7 +2,7 @@
   "name": "CoClaw",
   "displayName": "CoClaw",
   "description": "AI coding assistant with persistent memory, powered by GitHub Copilot",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "publisher": "gdhanush270",
   "license": "Apache-2.0",
   "icon": "icon.png",
@@ -391,6 +391,24 @@
               "altText": "Memory browser",
               "image": "images/icon.png"
             }
+          },
+          {
+            "id": "CoClaw.welcome.agents",
+            "title": "Run a Multi-Agent Plan",
+            "description": "Type **@CoClaw /agents <task>** in the chat panel to break a request into a Planner → Coder(s) → Reviewer → Tester pipeline that runs through shared memory. Use the CoClaw activity-bar icon to watch the live agent tree, and tune `CoClaw.agents.mode` if you want every prompt to route through the orchestrator.\n\n[Open Chat](command:workbench.action.chat.open)",
+            "media": {
+              "altText": "Multi-agent orchestration",
+              "image": "images/icon.png"
+            }
+          },
+          {
+            "id": "CoClaw.welcome.telegram",
+            "title": "Link Telegram for Remote Control",
+            "description": "Run **CoClaw: Link Telegram Bot**, paste a token from @BotFather plus your numeric user ID (from @userinfobot), then send **@CoClaw /auto** in chat to start the bridge — or **@CoClaw /open** for OpenClaw mode (heartbeat checks, cron jobs, file delivery).\n\n[Link Telegram Bot](command:CoClaw.linkTelegram)",
+            "media": {
+              "altText": "Telegram bridge setup",
+              "image": "images/icon.png"
+            }
           }
         ]
       }
@@ -458,6 +476,17 @@
           "default": "22:00",
           "description": "End of active hours for heartbeat (HH:MM, 24h format)"
         },
+        "CoClaw.heartbeat.timezone": {
+          "type": "string",
+          "default": "",
+          "description": "IANA time zone (e.g. 'Asia/Kolkata', 'America/New_York') used to evaluate heartbeat active hours. Leave empty to use the host's local time."
+        },
+        "CoClaw.logging.level": {
+          "type": "string",
+          "enum": ["off", "error", "warn", "info", "debug"],
+          "default": "error",
+          "description": "Verbosity for the CoClaw output channel (View → Output → CoClaw). Use 'debug' to capture full traces when filing a bug."
+        },
         "CoClaw.telegram.sarcasticReactions": {
           "type": "boolean",
           "default": true,
@@ -468,6 +497,11 @@
           "enum": ["sarcastic", "friendly", "professional", "playful", "neutral"],
           "default": "sarcastic",
           "description": "Conversational tone the assistant uses in Telegram /open mode."
+        },
+        "CoClaw.telegram.silentUnauthorized": {
+          "type": "boolean",
+          "default": false,
+          "description": "Silently ignore messages from non-linked Telegram users instead of replying with an 'Unauthorized' notice. Useful when the bot is added to shared chats and you don't want to advertise its presence."
         },
         "CoClaw.telegram.useEmojis": {
           "type": "boolean",
@@ -486,6 +520,25 @@
           "minimum": 1,
           "maximum": 8,
           "description": "Maximum number of parallel Coder agents the orchestrator may fan out for a single coder task."
+        },
+        "CoClaw.tools.maxPerRequest": {
+          "type": "integer",
+          "default": 120,
+          "minimum": 1,
+          "maximum": 256,
+          "description": "Maximum number of tools to send in a single language-model request. Most providers (OpenAI, Gemini) reject requests with more than 128 tools. The default of 120 leaves headroom; lower it if you still see 'Cannot have more than N tools per request' errors. Tools are kept in this priority order: user-prioritized → CoClaw_* → core file/edit/search tools → others (alphabetic)."
+        },
+        "CoClaw.tools.exclude": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Case-insensitive substring patterns; any tool whose name contains a listed pattern is dropped before the request reaches the model. Useful for noisy MCP servers or extension tools you never want the assistant to call (e.g. ['mssql', 'jupyter'])."
+        },
+        "CoClaw.tools.priority": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Case-insensitive substring patterns for tools that must survive the per-request cap. Bumps matching tools above CoClaw's own tools in the selection order — use sparingly (e.g. ['github_pr', 'k8s_apply'] to guarantee a niche MCP tool stays available even when 200+ tools are registered)."
         }
       }
     },
@@ -512,6 +565,7 @@
     "build": "node esbuild.js --production",
     "watch": "node esbuild.js --watch",
     "lint": "eslint src --ext ts",
+    "typecheck": "tsc --noEmit",
     "test": "mocha --require ts-node/register --require src/test/setup.ts src/test/**/*.test.ts --timeout 10000",
     "package": "vsce package --allow-missing-repository"
   },

@@ -40,6 +40,16 @@ const TELEGRAM_API = 'api.telegram.org';
 const MAX_MESSAGE_LENGTH = 4096;
 const SPLIT_LABEL_RESERVE = 24;
 
+// Reuse a single TLS connection across requests. The previous code created a
+// fresh connection (and TLS handshake) for every API call, which adds 100-300ms
+// of latency to interactive replies. Keep the pool small — Telegram allows a
+// long-poll and a few concurrent sends, no more.
+const sharedHttpsAgent = new https.Agent({
+    keepAlive: true,
+    maxSockets: 4,
+    keepAliveMsecs: 30_000,
+});
+
 /**
  * Lightweight Telegram Bot API client using built-in https.
  * No external dependencies — bundles cleanly with esbuild.
@@ -80,7 +90,12 @@ export class TelegramApi {
 
     /** Send a text message. Automatically formats HTML messages and splits long payloads safely. */
     async sendMessage(chatId: number, text: string, parseMode: TelegramParseMode = 'HTML'): Promise<void> {
-        const chunks = this.prepareChunks(text, parseMode);
+        // Telegram rejects empty / whitespace-only sendMessage payloads with
+        // a 400 error. Guard early so callers (including the streaming flush
+        // path) don't trigger silent failures from an over-zealous splitter.
+        if (!text || !text.trim()) { return; }
+        const chunks = this.prepareChunks(text, parseMode).filter(c => c && c.trim());
+        if (chunks.length === 0) { return; }
         for (let i = 0; i < chunks.length; i++) {
             let chunk = chunks[i];
             // Add continuation markers when a message is split
@@ -212,6 +227,7 @@ export class TelegramApi {
                     'Content-Length': Buffer.byteLength(postData),
                 },
                 timeout: method === 'getUpdates' ? 40000 : 15000,
+                agent: sharedHttpsAgent,
             };
 
             const req = https.request(options, (res) => {
@@ -305,6 +321,7 @@ export class TelegramApi {
                     'Content-Length': body.length,
                 },
                 timeout: 60000,
+                agent: sharedHttpsAgent,
             };
             const req = https.request(options, (res) => {
                 let data = '';

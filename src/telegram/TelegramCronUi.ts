@@ -15,27 +15,35 @@ export function buildCronControlPanel(jobs: CronJobDefinition[]): { text: string
     const activeCount = jobs.filter((job) => job.enabled).length;
 
     const lines: string[] = [
-        '⏰ Cron Control Panel',
+        '⏰ **Cron Control Panel**',
         '',
-        `Jobs: ${jobs.length}`,
-        `Active: ${activeCount}`,
+        `**Jobs:** ${jobs.length}`,
+        `**Active:** ${activeCount}`,
     ];
 
     if (visibleJobs.length === 0) {
-        lines.push('', 'No cron jobs scheduled.', '', 'Use /cron add <schedule> <name> | <prompt> to create one.');
+        lines.push(
+            '',
+            '_No cron jobs scheduled._',
+            '',
+            'Use `/cron add <schedule> <name> | <prompt>` to create one.',
+        );
     } else {
-        lines.push('', 'Tap the buttons below each job to pause, resume, or delete it.', '');
+        lines.push('', '_Tap a button below to pause, resume, or delete a job._', '');
 
         visibleJobs.forEach((job, index) => {
             const status = job.enabled ? '✅' : '⏸️';
             const schedule = formatSchedule(job);
-            lines.push(`${index + 1}. ${status} ${job.name}`);
+            lines.push(`${index + 1}. ${status} **${job.name}**`);
             lines.push(`   ${schedule}`);
-            lines.push(`   id: ${job.id}`);
+            lines.push(`   id: \`${job.id}\``);
         });
 
         if (jobs.length > MAX_VISIBLE_JOBS) {
-            lines.push('', `Showing first ${MAX_VISIBLE_JOBS} jobs. Use a specific job id in chat for the rest.`);
+            lines.push(
+                '',
+                `_Showing first ${MAX_VISIBLE_JOBS} jobs. Use a specific job id in chat for the rest._`,
+            );
         }
     }
 
@@ -46,8 +54,9 @@ export function buildCronControlPanel(jobs: CronJobDefinition[]): { text: string
 }
 
 export function buildCronClearConfirmPanel(jobCount: number): { text: string; buttons: TelegramInlineKeyboard } {
+    const noun = jobCount === 1 ? 'job' : 'jobs';
     return {
-        text: `⚠️ Clear all cron jobs?\n\nThis will remove ${jobCount} scheduled ${jobCount === 1 ? 'job' : 'jobs'}.`,
+        text: `⚠️ **Clear all cron jobs?**\n\nThis will remove ${jobCount} scheduled ${noun}.`,
         buttons: [
             [
                 { text: '🗑️ Yes, clear all', callback_data: 'cron_ui:clear_all' },
@@ -98,12 +107,12 @@ function truncateButtonLabel(name: string): string {
 
 function formatSchedule(job: CronJobDefinition): string {
     if (job.cron) {
-        return `schedule: ${job.cron}`;
+        return `schedule: \`${job.cron}\``;
     }
 
     if (job.fireAt) {
-        return `runs at: ${new Date(job.fireAt).toLocaleString()}`;
+        return `runs at: \`${new Date(job.fireAt).toLocaleString()}\``;
     }
 
-    return 'schedule: unknown';
+    return 'schedule: _unknown_';
 }

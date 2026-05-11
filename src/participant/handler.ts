@@ -3,6 +3,7 @@ import { ModelManager } from '../lm/ModelManager';
 import { PromptBuilder } from '../lm/PromptBuilder';
 import { ToolRunner } from '../lm/ToolRunner';
 import { ToolResultCache } from '../lm/ToolResultCache';
+import { getAutonomousTools } from '../lm/toolFilter';
 import { MemoryEngine } from '../memory/MemoryEngine';
 import { StatusBar } from '../ui/statusBar';
 import { TelegramBot } from '../telegram/TelegramBot';
@@ -120,8 +121,11 @@ export class ParticipantHandler {
                     // Add current message
                     messages.push(vscode.LanguageModelChatMessage.User(request.prompt));
 
-                    // Get ALL registered tools so the model can edit files, run commands, etc.
-                    const tools = vscode.lm.tools.map(t => t as vscode.LanguageModelChatTool);
+                    // All registered tools that work without an interactive UI
+                    // prompt. We explicitly exclude e.g. simple-browser /
+                    // live-preview tools because those hang waiting for the
+                    // user to click a confirmation dialog — see toolFilter.
+                    const tools = getAutonomousTools();
 
                     progress.report({ message: 'Thinking...' });
                     stream.progress('Thinking...');

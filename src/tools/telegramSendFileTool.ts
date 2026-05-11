@@ -30,14 +30,19 @@ export class TelegramSendFileTool implements vscode.LanguageModelTool<Input> {
         if (!folders || folders.length === 0) {
             return text('Error: no workspace folder open.');
         }
-        const root = folders[0].uri;
-        const rootFs = root.fsPath;
-
-        // Resolve to an absolute path inside the workspace.
+        // Multi-root workspaces have N folders. Resolve a relative path
+        // against the first folder for ergonomics, then accept any absolute
+        // path that lives inside ANY of the workspace roots.
+        const rootFs = folders[0].uri.fsPath;
         const abs = path.isAbsolute(rawPath) ? path.normalize(rawPath) : path.normalize(path.join(rootFs, rawPath));
-        const relCheck = path.relative(rootFs, abs);
-        if (relCheck.startsWith('..') || path.isAbsolute(relCheck)) {
-            return text(`Error: path must be inside the workspace folder. Got: ${rawPath}`);
+
+        const isInsideAnyRoot = folders.some(folder => {
+            const wsRoot = path.normalize(folder.uri.fsPath);
+            const rel = path.relative(wsRoot, abs);
+            return !rel.startsWith('..') && !path.isAbsolute(rel);
+        });
+        if (!isInsideAnyRoot) {
+            return text(`Error: path must be inside a workspace folder. Got: ${rawPath}`);
         }
 
         let content: Uint8Array;

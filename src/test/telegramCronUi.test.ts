@@ -25,9 +25,11 @@ describe('TelegramCronUi', () => {
             makeJob({ id: 'cron_test_2', name: 'Standup', enabled: false, cron: null, fireAt: '2026-03-26T08:00:00.000Z' }),
         ]);
 
-        assert.ok(panel.text.includes('⏰ Cron Control Panel'));
+        assert.ok(panel.text.includes('Cron Control Panel'),
+            `expected panel header in: ${panel.text}`);
         assert.ok(panel.text.includes('Drink water'));
-        assert.ok(panel.text.includes('id: cron_test_1'));
+        assert.ok(panel.text.includes('id: `cron_test_1`'),
+            `expected job id rendered as inline code: ${panel.text}`);
         assert.ok(panel.text.includes('Standup'));
         assert.strictEqual(panel.buttons[0][0].callback_data, 'cron_ui:pause:cron_test_1');
         assert.strictEqual(panel.buttons[1][0].callback_data, 'cron_ui:resume:cron_test_2');

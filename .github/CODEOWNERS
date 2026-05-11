@@ -1,0 +1,20 @@
+# CODEOWNERS for CoClaw
+#
+# Every PR touching the repo requires a review from the listed owner(s) before
+# it can be merged into main (enforced by the Repository Ruleset on `main`).
+#
+# Syntax: <pattern>  <owner1> [<owner2> ...]
+# Patterns follow .gitignore rules and are evaluated in order; the LAST match
+# wins. See https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owner for everything that doesn't match a more specific rule below.
+*       @gdhanush27
+
+# Build / CI / repo-policy files: always require the project owner explicitly.
+/.github/                  @gdhanush27
+/.github/workflows/        @gdhanush27
+/.github/CODEOWNERS        @gdhanush27
+/package.json              @gdhanush27
+/package-lock.json         @gdhanush27
+/tsconfig.json             @gdhanush27
+/esbuild.js                @gdhanush27
