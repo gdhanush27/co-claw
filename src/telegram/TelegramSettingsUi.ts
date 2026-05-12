@@ -36,6 +36,7 @@ export const SETTINGS: SettingDefinition[] = [
     // Agents
     { key: 'CoClaw.agents.mode', label: 'Mode', description: 'Multi-agent orchestration mode', type: 'enum', enumValues: ['off', 'slash', 'always'], group: 'Agents' },
     { key: 'CoClaw.agents.maxParallelCoders', label: 'Max parallel coders', description: 'Max parallel Coder agents per task', type: 'number', min: 1, max: 8, step: 1, group: 'Agents' },
+    { key: 'CoClaw.agents.minParallelCoders', label: 'Min parallel coders', description: 'Min Coder agents to spawn per task (pads with generic lanes when needed; capped to max)', type: 'number', min: 1, max: 8, step: 1, group: 'Agents' },
 
     // Memory
     { key: 'CoClaw.memory.autoExtract', label: 'Auto-extract', description: 'Auto-extract facts from responses', type: 'boolean', group: 'Memory' },

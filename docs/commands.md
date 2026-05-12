@@ -92,7 +92,7 @@ Runs your task through the multi-agent orchestrator. A Planner produces a JSON D
 @CoClaw /agents Build a login page with API and tests
 ```
 
-Live progress is shown in the **Agents** sidebar (the CoClaw activity bar icon). Tune fan-out width with `CoClaw.agents.maxParallelCoders` and switch modes with `CoClaw.agents.mode` (`off`, `slash`, `always`).
+Live progress is shown in the **Agents** sidebar (the CoClaw activity bar icon). Tune fan-out width with `CoClaw.agents.maxParallelCoders` (ceiling) and `CoClaw.agents.minParallelCoders` (floor — pads small tasks with generic lanes), and switch modes with `CoClaw.agents.mode` (`off`, `slash`, `always`).
 
 ## Command Palette Commands
 

@@ -1,6 +1,6 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
-import { Orchestrator } from '../agents/Orchestrator';
+import { Orchestrator, parseRunFlags, resolveOutputCap } from '../agents/Orchestrator';
 import { RunRegistry } from '../agents/RunRegistry';
 import { SharedMemoryStore } from '../agents/SharedMemoryStore';
 
@@ -112,5 +112,100 @@ describe('Orchestrator.hasCycle', () => {
             { id: 'c', agent: 'tester', prompt: '', dependsOn: ['b'], status: 'pending' },
         ];
         assert.strictEqual(orch.hasCycle(tasks), false);
+    });
+});
+
+describe('Orchestrator parseRunFlags', () => {
+    it('returns the prompt unchanged when no flags are present', () => {
+        const r = parseRunFlags('investigate the workflow files');
+        assert.strictEqual(r.fullOutput, false);
+        assert.strictEqual(r.prompt, 'investigate the workflow files');
+    });
+
+    it('strips a leading --full and sets fullOutput', () => {
+        const r = parseRunFlags('--full investigate the workflow files');
+        assert.strictEqual(r.fullOutput, true);
+        assert.strictEqual(r.prompt, 'investigate the workflow files');
+    });
+
+    it('strips a trailing --full and sets fullOutput', () => {
+        const r = parseRunFlags('investigate the workflow files --full');
+        assert.strictEqual(r.fullOutput, true);
+        assert.strictEqual(r.prompt, 'investigate the workflow files');
+    });
+
+    it('accepts the --all and --no-truncate aliases', () => {
+        for (const flag of ['--all', '--no-truncate', '--notrunc']) {
+            const r = parseRunFlags(`${flag} ship it`);
+            assert.strictEqual(r.fullOutput, true, `expected ${flag} to set fullOutput`);
+            assert.strictEqual(r.prompt, 'ship it');
+        }
+    });
+
+    it('strips multiple stacked flags from either end', () => {
+        const r = parseRunFlags('--full --all do the thing --no-truncate');
+        assert.strictEqual(r.fullOutput, true);
+        assert.strictEqual(r.prompt, 'do the thing');
+    });
+
+    it('preserves a mid-prompt --full so prompts about the flag itself are not munged', () => {
+        const r = parseRunFlags('explain what --full does in /agents');
+        assert.strictEqual(r.fullOutput, false);
+        assert.strictEqual(r.prompt, 'explain what --full does in /agents');
+    });
+
+    it('handles flag-only prompts gracefully (empty stripped result)', () => {
+        const r = parseRunFlags('--full');
+        assert.strictEqual(r.fullOutput, true);
+        assert.strictEqual(r.prompt, '');
+    });
+});
+
+describe('Orchestrator resolveOutputCap', () => {
+    const originalGetConfig = vscode.workspace.getConfiguration;
+
+    function stubConfig(values: { summaryMaxChars?: number; alwaysShowFullOutput?: boolean }): void {
+        (vscode.workspace as any).getConfiguration = (section?: string) => ({
+            get: <T>(key: string, defaultValue: T): T => {
+                if (section === 'CoClaw.agents' && key in values) {
+                    return (values as any)[key] as T;
+                }
+                return defaultValue;
+            },
+        });
+    }
+
+    afterEach(() => {
+        (vscode.workspace as any).getConfiguration = originalGetConfig;
+    });
+
+    it('returns the configured cap when nothing forces full output', () => {
+        stubConfig({ summaryMaxChars: 1234 });
+        assert.strictEqual(resolveOutputCap(false), 1234);
+    });
+
+    it('returns Infinity when the per-run flag is true (highest precedence)', () => {
+        stubConfig({ summaryMaxChars: 1234, alwaysShowFullOutput: false });
+        assert.strictEqual(resolveOutputCap(true), Number.POSITIVE_INFINITY);
+    });
+
+    it('returns Infinity when alwaysShowFullOutput is on, even with a finite cap', () => {
+        stubConfig({ summaryMaxChars: 500, alwaysShowFullOutput: true });
+        assert.strictEqual(resolveOutputCap(false), Number.POSITIVE_INFINITY);
+    });
+
+    it('treats summaryMaxChars=0 as unlimited', () => {
+        stubConfig({ summaryMaxChars: 0 });
+        assert.strictEqual(resolveOutputCap(false), Number.POSITIVE_INFINITY);
+    });
+
+    it('falls back to the 8000 default when no settings are present', () => {
+        stubConfig({});
+        assert.strictEqual(resolveOutputCap(false), 8000);
+    });
+
+    it('floors fractional caps to a safe integer', () => {
+        stubConfig({ summaryMaxChars: 1234.9 });
+        assert.strictEqual(resolveOutputCap(false), 1234);
     });
 });

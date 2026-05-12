@@ -8,12 +8,30 @@ export interface SplitResult {
 }
 
 /**
+ * Generic lanes used to *pad* a coder task up to `minParallel` when the
+ * heuristic would otherwise hand back fewer units. Ordered by usefulness —
+ * implementation/tests/docs are almost always something a coder can do.
+ */
+const PAD_LANES: readonly string[] = [
+    'implementation',
+    'tests',
+    'docs',
+    'error-handling',
+    'logging-telemetry',
+    'config-build',
+    'auth-security',
+    'business-logic',
+];
+
+/**
  * Decide how many parallel coder agents to fan out for a single coder task.
  * Heuristic order:
  *   1. If the planner provided `units`, use them (one agent per unit, capped).
  *   2. Otherwise extract file-path-like tokens from the prompt.
  *   3. Otherwise extract bullet/numbered list items from the prompt.
- *   4. Otherwise leave as a single task.
+ *   4. Otherwise leave as a single task — UNLESS minParallel > 1, in which
+ *      case pad with generic lanes (implementation/tests/docs/...) to reach
+ *      the floor.
  *
  * If two units target the same file path, they are chained sequentially
  * (dependsOn) instead of parallelized to avoid file-write races.
@@ -22,16 +40,34 @@ export function splitCoderTask(
     task: SubTask,
     userPrompt: string,
     maxParallel: number,
+    minParallel = 1,
 ): SplitResult {
     if (task.agent !== 'coder') {
         return { replacements: [task], didSplit: false };
     }
 
     const cap = Math.max(1, Math.min(maxParallel, 8));
+    // Minimum can never exceed the maximum, and never goes below 1. We
+    // silently clamp instead of erroring so a misconfigured `min > max`
+    // setting doesn't block /agents from running.
+    const floor = Math.max(1, Math.min(minParallel, cap));
+
     let units = (task.units && task.units.length > 0) ? task.units.slice() : extractUnits(task.prompt, userPrompt);
 
     // Deduplicate while preserving order
     units = Array.from(new Set(units.map(u => u.trim()).filter(u => u.length > 0)));
+
+    // Pad up to the floor with generic lanes that aren't already represented.
+    if (units.length < floor) {
+        const have = new Set(units.map(u => u.toLowerCase()));
+        for (const lane of PAD_LANES) {
+            if (units.length >= floor) { break; }
+            if (!have.has(lane)) {
+                units.push(lane);
+                have.add(lane);
+            }
+        }
+    }
 
     if (units.length <= 1) {
         return { replacements: [task], didSplit: false };

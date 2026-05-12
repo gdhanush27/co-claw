@@ -132,6 +132,53 @@ All CoClaw settings are under the `CoClaw.*` namespace. Open them quickly with *
 - **Range:** 1–8
 - **Description:** Maximum number of coder agents that may run in parallel during a `/agents` run.
 
+### `CoClaw.agents.minParallelCoders`
+
+- **Type:** integer
+- **Default:** `1` (no forced minimum — current/legacy behavior)
+- **Range:** 1–8
+- **Description:** Minimum number of coder agents to spawn for any single coder task. When the heuristic splitter would naturally produce fewer (e.g. an atomic typo fix, or a task that doesn't trigger any work-lane keywords), it is **padded** with generic lanes from this fallback list — in this order:
+    `implementation` → `tests` → `docs` → `error-handling` → `logging-telemetry` → `config-build` → `auth-security` → `business-logic`.
+- **Always capped to `maxParallelCoders`** at runtime, so a misconfigured `min=8 / max=4` pair silently behaves as `min=4`.
+- **Trade-off:** raising the floor guarantees more parallel coverage on small tasks, but for genuinely atomic work (a one-line fix) it spends model tokens on padded lanes that may not have anything meaningful to do. Default `1` keeps the original "split only when warranted" behavior.
+
+### `CoClaw.agents.summaryMaxChars`
+
+- **Type:** integer
+- **Default:** `8000`
+- **Range:** 0–200000 (0 = unlimited)
+- **Description:** Per-task character cap applied in two places:
+    1. The chat-panel summary block that lists `✓ <agent> [<role>]` results at the end of a `/agents` run.
+    2. The copy of each agent's text written to the shared-memory store under `<role>:<task-id>` for downstream agents (Reviewer/Tester) to read.
+
+  Bump it to `0` for unlimited output if you want the full report inline; raise it to a finite number (e.g. `20000`) if you need more room without going boundless. Lowering it shortens the chat but also reduces the context that dependent agents receive — keep both axes in mind.
+
+### `CoClaw.agents.alwaysShowFullOutput`
+
+- **Type:** boolean
+- **Default:** `false`
+- **Description:** When `true`, every `/agents` run skips the per-task character cap entirely — equivalent to passing `--full` on every prompt. This overrides `CoClaw.agents.summaryMaxChars`. Useful when you regularly need long, untrimmed summaries; otherwise leave it off and pass `--full` ad-hoc.
+
+#### Precedence
+
+The runtime cap is resolved in this order (first match wins):
+
+1. `--full` (or `--all` / `--no-truncate` / `--notrunc`) anywhere in the `/agents` prompt as a leading or trailing token → unlimited for this run only.
+2. `CoClaw.agents.alwaysShowFullOutput: true` → unlimited for every run.
+3. `CoClaw.agents.summaryMaxChars: 0` → unlimited for every run (legacy "magic 0" form).
+4. `CoClaw.agents.summaryMaxChars: <N>` → cap at N characters per task.
+5. Default → 8000 characters.
+
+#### Per-run override: `--full` flag
+
+Prefer not to touch settings every time you want a long answer? Prefix or suffix your `/agents` prompt with `--full` (aliases: `--all`, `--no-truncate`, `--notrunc`) and the cap is bypassed for that run only:
+
+```
+@CoClaw /agents --full investigate the workflow files and summarize every job
+```
+
+The flag is stripped before the planner sees the prompt, so it never leaks into the agent's reasoning. A mid-prompt occurrence (e.g. *"explain what `--full` does"*) is preserved verbatim so you can still talk *about* the flag without triggering it.
+
 ## Tool-Selection Settings
 
 These settings control which tools CoClaw forwards to the language model on every request. They apply uniformly across the chat participant, the Telegram bridge, and the multi-agent orchestrator.
