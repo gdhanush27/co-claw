@@ -83,6 +83,56 @@ describe('Orchestrator.parsePlan', () => {
         const plan = orch.parsePlan(text);
         assert.strictEqual(plan, undefined);
     });
+
+    it('parses a valid `difficulty` field on each task', () => {
+        const orch = makeOrchestrator();
+        const text = JSON.stringify({
+            tasks: [
+                { id: 't1', agent: 'coder',    prompt: 'fix typo', difficulty: 'light',  dependsOn: [] },
+                { id: 't2', agent: 'reviewer', prompt: 'audit',    difficulty: 'hard',   dependsOn: ['t1'] },
+                { id: 't3', agent: 'tester',   prompt: 'add test', difficulty: 'medium', dependsOn: ['t2'] },
+            ],
+        });
+        const plan = orch.parsePlan(text);
+        assert.ok(plan);
+        assert.strictEqual(plan!.tasks[0].difficulty, 'light');
+        assert.strictEqual(plan!.tasks[1].difficulty, 'hard');
+        assert.strictEqual(plan!.tasks[2].difficulty, 'medium');
+    });
+
+    it('drops invalid `difficulty` values instead of poisoning the task', () => {
+        // Critical: an unknown difficulty string MUST NOT survive into the
+        // SubTask, otherwise getModelForTier() would either explode or fall
+        // through silently to the default tier without warning.
+        const orch = makeOrchestrator();
+        const text = JSON.stringify({
+            tasks: [
+                { id: 't1', agent: 'coder', prompt: 'build',   difficulty: 'hardest', dependsOn: [] },
+                { id: 't2', agent: 'coder', prompt: 'build 2', difficulty: 42,        dependsOn: [] },
+                { id: 't3', agent: 'coder', prompt: 'build 3',                         dependsOn: [] },
+            ],
+        });
+        const plan = orch.parsePlan(text);
+        assert.ok(plan);
+        for (const t of plan!.tasks) {
+            assert.strictEqual(t.difficulty, undefined,
+                `task ${t.id} should have undefined difficulty for invalid/missing values`);
+        }
+    });
+
+    it('normalizes `difficulty` casing so "HARD" still routes to the hard tier', () => {
+        const orch = makeOrchestrator();
+        const text = JSON.stringify({
+            tasks: [
+                { id: 't1', agent: 'coder', prompt: 'build', difficulty: 'HARD', dependsOn: [] },
+                { id: 't2', agent: 'coder', prompt: 'fix',   difficulty: ' Light ', dependsOn: [] },
+            ],
+        });
+        const plan = orch.parsePlan(text);
+        assert.ok(plan);
+        assert.strictEqual(plan!.tasks[0].difficulty, 'hard');
+        assert.strictEqual(plan!.tasks[1].difficulty, 'light');
+    });
 });
 
 describe('Orchestrator.hasCycle', () => {

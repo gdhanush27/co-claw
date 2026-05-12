@@ -23,6 +23,8 @@ import { SharedMemoryStore } from './agents/SharedMemoryStore';
 import { Orchestrator, SpawnerHolder } from './agents/Orchestrator';
 import { AgentTreeProvider } from './ui/agentTreeProvider';
 import { registerSelectModelCommand } from './commands/selectModel';
+import { registerSelectTierModelsCommand } from './commands/selectTierModels';
+import { registerSetModelFamilyCommand, registerSetTierModelCommand } from './commands/setModelCommands';
 import { registerShowMemoryCommand } from './commands/showMemory';
 import { registerClearMemoryCommand } from './commands/clearMemory';
 import { registerEditSoulCommand, registerEditProfileCommand } from './commands/editSoul';
@@ -118,6 +120,9 @@ export function activate(context: vscode.ExtensionContext) {
     // Commands
     context.subscriptions.push(
         registerSelectModelCommand(modelManager, statusBar),
+        registerSelectTierModelsCommand(modelManager),
+        registerSetModelFamilyCommand(modelManager, statusBar),
+        registerSetTierModelCommand(modelManager),
         registerShowMemoryCommand(memoryPanel),
         registerClearMemoryCommand(memoryEngine),
         registerEditSoulCommand(soulConfig),

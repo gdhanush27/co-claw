@@ -6,9 +6,120 @@ import { RunRegistry } from './RunRegistry';
 import { SharedMemoryStore } from './SharedMemoryStore';
 import { splitCoderTask } from './CoderSplitter';
 import { AGENT_DEFINITIONS } from './AgentDefinitions';
-import { AgentRole, PlanDocument, SubTask } from './types';
+import { AgentRole, PlanDocument, SubTask, TaskDifficulty } from './types';
 import { AgentSpawner } from '../tools/spawnAgentTool';
 import { Logger } from '../util/Logger';
+
+/** Allow-list for the `difficulty` field coming back from the planner. */
+const VALID_DIFFICULTIES: ReadonlySet<TaskDifficulty> = new Set(['light', 'medium', 'hard']);
+
+function coerceDifficulty(raw: unknown): TaskDifficulty | undefined {
+    if (typeof raw !== 'string') { return undefined; }
+    const v = raw.trim().toLowerCase();
+    return VALID_DIFFICULTIES.has(v as TaskDifficulty) ? (v as TaskDifficulty) : undefined;
+}
+
+/** Possible modes for the auto-injected final reviewer. */
+export type FinalReviewerMode = 'auto' | 'always' | 'off';
+
+const VALID_FINAL_REVIEWER_MODES: ReadonlySet<FinalReviewerMode> = new Set(['auto', 'always', 'off']);
+
+/** Roles whose output the final reviewer needs to cover. */
+const CODE_PRODUCING_ROLES: ReadonlySet<AgentRole> = new Set<AgentRole>(['coder', 'tester']);
+
+/**
+ * Prompt handed to the auto-injected final reviewer task. The reviewer's
+ * SYSTEM prompt already locks it to read-only tools and a verdict line;
+ * this USER prompt scopes it explicitly to a holistic, run-wide review.
+ */
+const FINAL_REVIEW_PROMPT = `Final consolidated review of this /agents run.
+
+All coder and tester siblings above have completed (their task ids are listed in your dependsOn). Your job:
+
+1. Use CoClaw_shared_memory_read with the runId from your <run_context> to pull EVERY coder:* and tester:* entry. Do NOT just review a single task — the value of a final reviewer is the cross-cutting view.
+2. Inspect the actual files that changed using read-only file tools (read / search). Do NOT use any edit/write/delete tools — they are denied for your role.
+3. Look at the run as a WHOLE:
+   - Consistency between sibling tasks (naming, error handling, types, contracts).
+   - Cross-cutting concerns: security, input validation, authentication, secret handling, logging, performance, test coverage.
+   - Integration issues no individual coder could see (e.g. did the API change but the caller wasn't updated?).
+4. Produce a SINGLE consolidated review report with this structure:
+   - One short paragraph summarizing what was built.
+   - Issues grouped by severity: **Critical**, **Major**, **Minor**, **Nit**. Cite file paths and line ranges where possible.
+   - Concrete suggested fixes for each issue.
+5. End with EXACTLY ONE LINE on its own:
+   - "APPROVED" if you'd merge as-is.
+   - "CHANGES_REQUESTED: <one-sentence reason>" otherwise.
+
+Constraints: do NOT modify any code, do NOT spawn other agents (CoClaw_spawn_agent is denied for your role anyway), do NOT ask the user questions.`;
+
+/**
+ * Detect whether a task is the auto-injected final reviewer. Used only for
+ * cosmetic chat rendering — orchestration logic does not branch on this.
+ */
+export function isFinalReviewTask(task: SubTask): boolean {
+    if (task.agent !== 'reviewer') { return false; }
+    return task.id === 'final-review' || /^final-review-\d+$/.test(task.id);
+}
+
+/**
+ * Decide whether to append a "final reviewer" task to `tasks` and return the
+ * (possibly extended) list. Pure function — exported for unit tests.
+ *
+ * A reviewer "covers" the code-producing tasks if every coder/tester id
+ * appears in its transitive `dependsOn` closure. If `auto` and at least one
+ * existing reviewer already covers them, no injection happens. `always` always
+ * appends. `off` never appends. If there are no code-producing tasks at all,
+ * we never inject (nothing to review).
+ */
+export function injectFinalReviewer(tasks: SubTask[], mode: FinalReviewerMode): SubTask[] {
+    if (mode === 'off') { return tasks; }
+
+    const codeTasks = tasks.filter(t => CODE_PRODUCING_ROLES.has(t.agent));
+    if (codeTasks.length === 0) { return tasks; }
+    const codeIds = new Set(codeTasks.map(t => t.id));
+
+    if (mode === 'auto') {
+        const byId = new Map(tasks.map(t => [t.id, t]));
+        const coveredBy = (reviewer: SubTask): boolean => {
+            const seen = new Set<string>();
+            const stack: string[] = [...reviewer.dependsOn];
+            while (stack.length > 0) {
+                const id = stack.pop()!;
+                if (seen.has(id)) { continue; }
+                seen.add(id);
+                const dep = byId.get(id);
+                if (dep) {
+                    for (const d of dep.dependsOn) { stack.push(d); }
+                }
+            }
+            for (const cid of codeIds) {
+                if (!seen.has(cid)) { return false; }
+            }
+            return true;
+        };
+        const alreadyCovered = tasks.some(t => t.agent === 'reviewer' && coveredBy(t));
+        if (alreadyCovered) { return tasks; }
+    }
+
+    // Choose a unique id (`final-review`, `final-review-2`, ...).
+    const taken = new Set(tasks.map(t => t.id));
+    let id = 'final-review';
+    let n = 1;
+    while (taken.has(id)) {
+        n++;
+        id = `final-review-${n}`;
+    }
+
+    const finalTask: SubTask = {
+        id,
+        agent: 'reviewer',
+        prompt: FINAL_REVIEW_PROMPT,
+        dependsOn: codeTasks.map(t => t.id),
+        difficulty: 'hard',
+        status: 'pending',
+    };
+    return [...tasks, finalTask];
+}
 
 export interface SpawnerHolder {
     current: AgentSpawner | undefined;
@@ -124,6 +235,9 @@ export class Orchestrator implements AgentSpawner {
             // --- Step A.5: Auto-fanout coder tasks ---
             plan.tasks = this.applyAutoFanout(plan.tasks, prompt);
 
+            // --- Step A.6: Inject final reviewer (auto / always) ---
+            plan.tasks = this.ensureFinalReviewer(plan.tasks);
+
             // Cycle check
             if (this.hasCycle(plan.tasks)) {
                 stream.markdown('_Plan contains cyclic dependencies; aborting._\n\n');
@@ -151,11 +265,24 @@ export class Orchestrator implements AgentSpawner {
     }
 
     // --- AgentSpawner ---
-    async spawnDynamicTask(runId: string, role: AgentRole, prompt: string, dependsOn: string[] = []): Promise<{ taskId: string; status: string; output?: string; error?: string }> {
+    async spawnDynamicTask(
+        runId: string,
+        role: AgentRole,
+        prompt: string,
+        dependsOn: string[] = [],
+        difficulty?: TaskDifficulty,
+    ): Promise<{ taskId: string; status: string; output?: string; error?: string }> {
         const run = this.registry.getRun(runId);
         if (!run) { throw new Error(`Run ${runId} not found`); }
         const taskId = `dyn-${role}-${run.tasks.length + 1}`;
-        const newTask: SubTask = { id: taskId, agent: role, prompt, dependsOn, status: 'pending' };
+        const newTask: SubTask = {
+            id: taskId,
+            agent: role,
+            prompt,
+            dependsOn,
+            difficulty: difficulty ?? undefined,
+            status: 'pending',
+        };
         run.tasks.push(newTask);
         this.registry.updateTask(runId, taskId, {});
 
@@ -183,7 +310,8 @@ export class Orchestrator implements AgentSpawner {
                 if (!AGENT_DEFINITIONS[agent] || agent === 'planner' || agent === 'orchestrator') { continue; }
                 const dependsOn = Array.isArray(raw.dependsOn) ? (raw.dependsOn as unknown[]).map(String) : [];
                 const units = Array.isArray(raw.units) ? (raw.units as unknown[]).map(String) : undefined;
-                tasks.push({ id, agent, prompt, units, dependsOn, status: 'pending' });
+                const difficulty = coerceDifficulty(raw.difficulty);
+                tasks.push({ id, agent, prompt, units, difficulty, dependsOn, status: 'pending' });
             }
             return tasks.length > 0 ? { tasks } : undefined;
         } catch {
@@ -223,6 +351,27 @@ export class Orchestrator implements AgentSpawner {
         return out;
     }
 
+    /**
+     * Inject a final reviewer task that depends on every code-producing
+     * sibling (coder + tester). Honors `CoClaw.agents.finalReviewer`:
+     *   - "off"    → no-op.
+     *   - "auto"   → inject only if no existing reviewer already covers
+     *                every code-producing task (transitive deps).
+     *   - "always" → inject unconditionally (in addition to any existing
+     *                reviewers in the plan).
+     *
+     * Pure-ish wrapper over {@link injectFinalReviewer} so the orchestrator
+     * is the only place that touches `vscode.workspace.getConfiguration`.
+     */
+    private ensureFinalReviewer(tasks: SubTask[]): SubTask[] {
+        const raw = vscode.workspace.getConfiguration('CoClaw.agents')
+            .get<string>('finalReviewer', 'auto');
+        const mode: FinalReviewerMode = VALID_FINAL_REVIEWER_MODES.has(raw as FinalReviewerMode)
+            ? (raw as FinalReviewerMode)
+            : 'auto';
+        return injectFinalReviewer(tasks, mode);
+    }
+
     private hasCycle(tasks: SubTask[]): boolean {
         const byId = new Map(tasks.map(t => [t.id, t]));
         const WHITE = 0, GRAY = 1, BLACK = 2;
@@ -253,10 +402,12 @@ export class Orchestrator implements AgentSpawner {
         for (const t of tasks) {
             const deps = t.dependsOn.length > 0 ? ` _(depends on: ${t.dependsOn.join(', ')})_` : '';
             const unit = (t.units && t.units.length > 0) ? ` — _focus: ${t.units.join(', ').substring(0, 80)}_` : '';
+            const tierTag = t.difficulty ? ` _[${t.difficulty}]_` : '';
+            const finalTag = isFinalReviewTask(t) ? ' **[final review]**' : '';
             // Use the first non-empty line that isn't the FOCUS UNIT marker for the title
             const lines = t.prompt.split('\n').map(l => l.trim()).filter(l => l.length > 0 && !l.startsWith('FOCUS UNIT:'));
             const title = (lines[0] ?? t.prompt).substring(0, 100);
-            stream.markdown(`- \`${t.id}\` **${t.agent}** — ${title}${unit}${deps}\n`);
+            stream.markdown(`- \`${t.id}\` **${t.agent}**${tierTag}${finalTag} — ${title}${unit}${deps}\n`);
         }
         stream.markdown('\n');
     }
@@ -323,13 +474,25 @@ export class Orchestrator implements AgentSpawner {
 
         const launchTask = (task: SubTask): Promise<void> => {
             this.registry.updateTask(runId, task.id, { status: 'running', startedAt: Date.now() });
-            stream.markdown(`▶ \`${task.id}\` (${task.agent}) started\n`);
+            const tier: TaskDifficulty = task.difficulty ?? 'medium';
 
             const work = (async () => {
                 try {
                     if (token.isCancellationRequested) {
                         throw new Error('cancelled');
                     }
+                    // Resolve the per-task model from its difficulty tier.
+                    // Falls back to the orchestrator's default model when no
+                    // tier override is configured (see ModelManager).
+                    const taskModel = await this.modelManager.getModelForTier(tier);
+                    // Surface the actual model on each task so the user can
+                    // verify per-tier routing in real time. Also persisted to
+                    // the CoClaw output channel at info level for audit.
+                    stream.markdown(`▶ \`${task.id}\` (${task.agent} · ${tier} → **${taskModel.name}** \`${taskModel.family}\`) started\n`);
+                    Logger.info(
+                        'orchestrator',
+                        `task=${task.id} agent=${task.agent} tier=${tier} model=${taskModel.family} (${taskModel.name})`,
+                    );
                     const result = await agentRunner.runAgent(
                         task.agent,
                         task.prompt,
@@ -337,6 +500,8 @@ export class Orchestrator implements AgentSpawner {
                         task.id,
                         token,
                         toolInvocationToken,
+                        undefined,
+                        taskModel,
                     );
                     // Persist the agent's text output to shared memory automatically.
                     // Same cap source as the chat renderer so raising one raises

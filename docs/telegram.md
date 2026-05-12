@@ -91,7 +91,7 @@ In `/open` mode the assistant adopts a configurable tone. Switch via `/settings`
 
 ## Settings Panel
 
-Send `/settings` (or `/s`) to open an interactive panel with inline buttons. Settings are grouped into Agents, Memory, Heartbeat, Telegram, and Model. Each entry supports the right input style:
+Send `/settings` (or `/s`) to open an interactive panel with inline buttons. Settings are grouped into Agents, Memory, Heartbeat, Telegram, Model, and Model Tiers. Send `/models` (or `/m`) to jump straight into the **Model Tiers** group. Each entry supports the right input style:
 
 - **Booleans** — on/off toggle
 - **Enums** — one button per allowed value

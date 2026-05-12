@@ -2,7 +2,7 @@
   "name": "CoClaw",
   "displayName": "CoClaw",
   "description": "AI coding assistant with persistent memory, powered by GitHub Copilot",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "publisher": "gdhanush270",
   "license": "Apache-2.0",
   "icon": "icon.png",
@@ -70,6 +70,10 @@
           {
             "name": "agents",
             "description": "Run a multi-agent orchestration: Planner decomposes the task, Coder/Reviewer/Tester/Memory agents execute in parallel"
+          },
+          {
+            "name": "model",
+            "description": "Show or change the active Copilot model. Try /model, /model list, /model gpt-4o, /model tier hard claude-opus-4, /model clear"
           }
         ]
       }
@@ -260,7 +264,8 @@
             "runId": {"type": "string"},
             "agent": {"type": "string", "enum": ["coder", "reviewer", "tester", "memory"]},
             "prompt": {"type": "string"},
-            "dependsOn": {"type": "array", "items": {"type": "string"}, "description": "Optional task ids this dynamic task should wait for"}
+            "dependsOn": {"type": "array", "items": {"type": "string"}, "description": "Optional task ids this dynamic task should wait for"},
+            "difficulty": {"type": "string", "enum": ["light", "medium", "hard"], "description": "Optional difficulty tier controlling which configured model handles this task. Defaults to 'medium'."}
           }
         }
       },
@@ -282,6 +287,10 @@
       {
         "command": "CoClaw.selectModel",
         "title": "CoClaw: Select Model"
+      },
+      {
+        "command": "CoClaw.selectTierModels",
+        "title": "CoClaw: Select Tier Models (Light / Medium / Hard)"
       },
       {
         "command": "CoClaw.showMemory",
@@ -418,8 +427,239 @@
       "properties": {
         "CoClaw.model.family": {
           "type": "string",
-          "description": "Preferred Copilot model family (workspace override)",
-          "default": ""
+          "default": "",
+          "enum": [
+            "",
+            "gpt-4o",
+            "gpt-4o-mini",
+            "gpt-4.1",
+            "gpt-5",
+            "gpt-5-mini",
+            "o1",
+            "o1-mini",
+            "o3",
+            "o3-mini",
+            "claude-3.5-sonnet",
+            "claude-3.7-sonnet",
+            "claude-sonnet-4",
+            "claude-opus-4",
+            "gemini-2.0-flash",
+            "gemini-2.5-pro"
+          ],
+          "enumItemLabels": [
+            "(auto — first available)",
+            "GPT-4o",
+            "GPT-4o mini",
+            "GPT-4.1",
+            "GPT-5",
+            "GPT-5 mini",
+            "o1",
+            "o1-mini",
+            "o3",
+            "o3-mini",
+            "Claude 3.5 Sonnet",
+            "Claude 3.7 Sonnet",
+            "Claude Sonnet 4",
+            "Claude Opus 4",
+            "Gemini 2.0 Flash",
+            "Gemini 2.5 Pro"
+          ],
+          "enumDescriptions": [
+            "Use whichever Copilot model is currently active / first available.",
+            "OpenAI GPT-4o — balanced general-purpose model.",
+            "OpenAI GPT-4o mini — cheap and fast.",
+            "OpenAI GPT-4.1.",
+            "OpenAI GPT-5 — most capable general model.",
+            "OpenAI GPT-5 mini.",
+            "OpenAI o1 — reasoning model.",
+            "OpenAI o1-mini.",
+            "OpenAI o3 — reasoning model.",
+            "OpenAI o3-mini.",
+            "Anthropic Claude 3.5 Sonnet.",
+            "Anthropic Claude 3.7 Sonnet.",
+            "Anthropic Claude Sonnet 4.",
+            "Anthropic Claude Opus 4 — strongest Anthropic model.",
+            "Google Gemini 2.0 Flash.",
+            "Google Gemini 2.5 Pro."
+          ],
+          "markdownDescription": "Preferred Copilot model family (workspace override). Pick a model from the dropdown, or [pick from the live Copilot list](command:CoClaw.selectModel) (always reflects the current Copilot inventory, including families newer than this dropdown)."
+        },
+        "CoClaw.models.light": {
+          "type": "string",
+          "default": "",
+          "enum": [
+            "",
+            "gpt-4o",
+            "gpt-4o-mini",
+            "gpt-4.1",
+            "gpt-5",
+            "gpt-5-mini",
+            "o1",
+            "o1-mini",
+            "o3",
+            "o3-mini",
+            "claude-3.5-sonnet",
+            "claude-3.7-sonnet",
+            "claude-sonnet-4",
+            "claude-opus-4",
+            "gemini-2.0-flash",
+            "gemini-2.5-pro"
+          ],
+          "enumItemLabels": [
+            "(default — use top-level model)",
+            "GPT-4o",
+            "GPT-4o mini",
+            "GPT-4.1",
+            "GPT-5",
+            "GPT-5 mini",
+            "o1",
+            "o1-mini",
+            "o3",
+            "o3-mini",
+            "Claude 3.5 Sonnet",
+            "Claude 3.7 Sonnet",
+            "Claude Sonnet 4",
+            "Claude Opus 4",
+            "Gemini 2.0 Flash",
+            "Gemini 2.5 Pro"
+          ],
+          "enumDescriptions": [
+            "No override — fall back to CoClaw.model.family.",
+            "OpenAI GPT-4o.",
+            "OpenAI GPT-4o mini — recommended for light tasks.",
+            "OpenAI GPT-4.1.",
+            "OpenAI GPT-5.",
+            "OpenAI GPT-5 mini.",
+            "OpenAI o1.",
+            "OpenAI o1-mini.",
+            "OpenAI o3.",
+            "OpenAI o3-mini.",
+            "Anthropic Claude 3.5 Sonnet.",
+            "Anthropic Claude 3.7 Sonnet.",
+            "Anthropic Claude Sonnet 4.",
+            "Anthropic Claude Opus 4.",
+            "Google Gemini 2.0 Flash.",
+            "Google Gemini 2.5 Pro."
+          ],
+          "markdownDescription": "Model family for **light**-difficulty tasks (typos, renames, version bumps, mechanical formatting). Pick a model from the dropdown, or [pick from the live Copilot list](command:CoClaw.selectTierModels?%5B%22light%22%5D) (always reflects the current Copilot inventory, including families newer than this dropdown)."
+        },
+        "CoClaw.models.medium": {
+          "type": "string",
+          "default": "",
+          "enum": [
+            "",
+            "gpt-4o",
+            "gpt-4o-mini",
+            "gpt-4.1",
+            "gpt-5",
+            "gpt-5-mini",
+            "o1",
+            "o1-mini",
+            "o3",
+            "o3-mini",
+            "claude-3.5-sonnet",
+            "claude-3.7-sonnet",
+            "claude-sonnet-4",
+            "claude-opus-4",
+            "gemini-2.0-flash",
+            "gemini-2.5-pro"
+          ],
+          "enumItemLabels": [
+            "(default — use top-level model)",
+            "GPT-4o",
+            "GPT-4o mini",
+            "GPT-4.1",
+            "GPT-5",
+            "GPT-5 mini",
+            "o1",
+            "o1-mini",
+            "o3",
+            "o3-mini",
+            "Claude 3.5 Sonnet",
+            "Claude 3.7 Sonnet",
+            "Claude Sonnet 4",
+            "Claude Opus 4",
+            "Gemini 2.0 Flash",
+            "Gemini 2.5 Pro"
+          ],
+          "enumDescriptions": [
+            "No override — fall back to CoClaw.model.family.",
+            "OpenAI GPT-4o — recommended for medium tasks.",
+            "OpenAI GPT-4o mini.",
+            "OpenAI GPT-4.1.",
+            "OpenAI GPT-5.",
+            "OpenAI GPT-5 mini.",
+            "OpenAI o1.",
+            "OpenAI o1-mini.",
+            "OpenAI o3.",
+            "OpenAI o3-mini.",
+            "Anthropic Claude 3.5 Sonnet.",
+            "Anthropic Claude 3.7 Sonnet.",
+            "Anthropic Claude Sonnet 4.",
+            "Anthropic Claude Opus 4.",
+            "Google Gemini 2.0 Flash.",
+            "Google Gemini 2.5 Pro."
+          ],
+          "markdownDescription": "Model family for **medium**-difficulty tasks (typical implementation, review, and tests — the default tier when the planner is unsure). Pick a model from the dropdown, or [pick from the live Copilot list](command:CoClaw.selectTierModels?%5B%22medium%22%5D) (always reflects the current Copilot inventory, including families newer than this dropdown)."
+        },
+        "CoClaw.models.hard": {
+          "type": "string",
+          "default": "",
+          "enum": [
+            "",
+            "gpt-4o",
+            "gpt-4o-mini",
+            "gpt-4.1",
+            "gpt-5",
+            "gpt-5-mini",
+            "o1",
+            "o1-mini",
+            "o3",
+            "o3-mini",
+            "claude-3.5-sonnet",
+            "claude-3.7-sonnet",
+            "claude-sonnet-4",
+            "claude-opus-4",
+            "gemini-2.0-flash",
+            "gemini-2.5-pro"
+          ],
+          "enumItemLabels": [
+            "(default — use top-level model)",
+            "GPT-4o",
+            "GPT-4o mini",
+            "GPT-4.1",
+            "GPT-5",
+            "GPT-5 mini",
+            "o1",
+            "o1-mini",
+            "o3",
+            "o3-mini",
+            "Claude 3.5 Sonnet",
+            "Claude 3.7 Sonnet",
+            "Claude Sonnet 4",
+            "Claude Opus 4",
+            "Gemini 2.0 Flash",
+            "Gemini 2.5 Pro"
+          ],
+          "enumDescriptions": [
+            "No override — fall back to CoClaw.model.family.",
+            "OpenAI GPT-4o.",
+            "OpenAI GPT-4o mini.",
+            "OpenAI GPT-4.1.",
+            "OpenAI GPT-5 — recommended for hard tasks.",
+            "OpenAI GPT-5 mini.",
+            "OpenAI o1 — reasoning model, good for hard tasks.",
+            "OpenAI o1-mini.",
+            "OpenAI o3 — reasoning model.",
+            "OpenAI o3-mini.",
+            "Anthropic Claude 3.5 Sonnet.",
+            "Anthropic Claude 3.7 Sonnet.",
+            "Anthropic Claude Sonnet 4.",
+            "Anthropic Claude Opus 4 — recommended for hard tasks.",
+            "Google Gemini 2.0 Flash.",
+            "Google Gemini 2.5 Pro."
+          ],
+          "markdownDescription": "Model family for **hard**-difficulty tasks (multi-file refactors, architectural design, security review, complex reasoning). Pick a model from the dropdown, or [pick from the live Copilot list](command:CoClaw.selectTierModels?%5B%22hard%22%5D) (always reflects the current Copilot inventory, including families newer than this dropdown)."
         },
         "CoClaw.memory.maxLongTermEntries": {
           "type": "number",
@@ -539,6 +779,22 @@
           "type": "boolean",
           "default": false,
           "description": "When true, every /agents run prints each agent's full output without truncation — equivalent to passing '--full' on every prompt. Overrides 'CoClaw.agents.summaryMaxChars'. Use this if you regularly need long, untrimmed summaries; leave off (default) and pass '--full' ad-hoc when you want occasional long output."
+        },
+        "CoClaw.agents.finalReviewer": {
+          "type": "string",
+          "default": "auto",
+          "enum": ["auto", "always", "off"],
+          "enumItemLabels": [
+            "auto (inject if no covering reviewer)",
+            "always (inject every run)",
+            "off (never inject)"
+          ],
+          "enumDescriptions": [
+            "Inject a final reviewer task at the end of the run, but ONLY if the plan doesn't already contain a reviewer that depends on every coder + tester task.",
+            "Always inject a final reviewer that depends on every coder + tester task, even if the plan already contains other reviewers.",
+            "Never inject. The plan's reviewers (if any) are used as-is."
+          ],
+          "markdownDescription": "Controls the orchestrator's **final reviewer** — an automatically-injected `reviewer` task at the end of every `/agents` run that reads every coder/tester sibling's output and produces a single consolidated review with a verdict line (`APPROVED` / `CHANGES_REQUESTED`). The final reviewer is configured for the **hard** difficulty tier so it picks up the strongest model you have assigned to that tier."
         },
         "CoClaw.tools.maxPerRequest": {
           "type": "integer",

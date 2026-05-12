@@ -54,6 +54,26 @@ All CoClaw settings are under the `CoClaw.*` namespace. Open them quickly with *
 - **Default:** `""` (empty — uses global preference)
 - **Description:** Override the Copilot model family at the workspace level. When set, this workspace uses the specified model regardless of the global selection. Leave empty to use the globally selected model.
 
+### `CoClaw.models.light`
+
+- **Type:** string
+- **Default:** `""` (empty — uses default model)
+- **Description:** Model family to use for light-difficulty tasks (e.g. `gpt-4o-mini`). Light tasks are simple, fast operations such as formatting or renaming. Leave empty to fall back to the general model selection.
+
+### `CoClaw.models.medium`
+
+- **Type:** string
+- **Default:** `""` (empty — uses default model)
+- **Description:** Model family to use for medium-difficulty tasks (e.g. `gpt-4o`). Medium tasks are standard implementation or review work. Leave empty to fall back to the general model selection.
+
+### `CoClaw.models.hard`
+
+- **Type:** string
+- **Default:** `""` (empty — uses default model)
+- **Description:** Model family to use for hard-difficulty tasks (e.g. `claude-3.5-sonnet`). Hard tasks involve complex architecture, multi-file refactoring, or deep reasoning. Leave empty to fall back to the general model selection.
+
+> **Tip:** rather than editing the three `CoClaw.models.*` keys by hand, run **CoClaw: Select Tier Models (Light / Medium / Hard)** from the Command Palette, or send `/models` to the Telegram bot. Both surfaces write to the same settings.
+
 ## Heartbeat Settings (`/open` mode)
 
 ### `CoClaw.heartbeat.enabled`
@@ -158,6 +178,19 @@ All CoClaw settings are under the `CoClaw.*` namespace. Open them quickly with *
 - **Type:** boolean
 - **Default:** `false`
 - **Description:** When `true`, every `/agents` run skips the per-task character cap entirely — equivalent to passing `--full` on every prompt. This overrides `CoClaw.agents.summaryMaxChars`. Useful when you regularly need long, untrimmed summaries; otherwise leave it off and pass `--full` ad-hoc.
+
+### `CoClaw.agents.finalReviewer`
+
+- **Type:** string enum — `"auto"` / `"always"` / `"off"`
+- **Default:** `"auto"`
+- **Description:** Controls whether the orchestrator appends a **final reviewer** task at the end of every `/agents` run. The final reviewer is a `reviewer`-role agent that depends on every coder and tester task in the plan, reads their shared-memory output, inspects the actual files that changed, and ends its report with a single verdict line: `APPROVED` or `CHANGES_REQUESTED: <reason>`.
+- **Modes:**
+    - `auto` *(default)* — inject a final reviewer **only if** the plan does not already contain a reviewer whose dependency graph transitively covers every coder + tester task. If the planner already produced a "review everything" task, no duplicate is added.
+    - `always` — append a final reviewer on every run, even if other reviewers already exist. Use this if you want a guaranteed, holistic final pass on top of any mid-DAG reviews.
+    - `off` — never inject. The plan's reviewers (if any) are used as-is.
+- **Difficulty tier:** the auto-injected final reviewer is tagged with `difficulty: "hard"`, so it picks up whatever Copilot model you've assigned to the **hard** tier via `CoClaw.models.hard` (or the matching VS Code Settings dropdown / the `/model tier hard <family>` chat command). Pair `always` with a strong model on the hard tier (e.g. Claude Sonnet) for the best results.
+- **What it produces:** the chat plan tags this task as `[final review]`, and the run summary contains the consolidated report — one short paragraph describing what was built, issues grouped by severity (Critical / Major / Minor / Nit) with concrete fixes, and the verdict line.
+- **Why it exists:** with parallel coder fan-out, no single coder sees the whole change set. A final reviewer is the only agent guaranteed to look across every sibling at once.
 
 #### Precedence
 

@@ -2,12 +2,17 @@ export type AgentRole = 'planner' | 'coder' | 'reviewer' | 'tester' | 'memory' |
 
 export type AgentStatus = 'pending' | 'running' | 'done' | 'failed';
 
+/** Difficulty tier that determines which model is used for a task. */
+export type TaskDifficulty = 'light' | 'medium' | 'hard';
+
 export interface SubTask {
     id: string;
     agent: AgentRole;
     prompt: string;
     /** Optional list of file paths or feature slices the planner suggests. */
     units?: string[];
+    /** Difficulty tier controlling which model to use. Defaults to 'medium'. */
+    difficulty?: TaskDifficulty;
     dependsOn: string[];
     status: AgentStatus;
     output?: string;

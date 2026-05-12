@@ -94,6 +94,8 @@ Runs your task through the multi-agent orchestrator. A Planner produces a JSON D
 
 Live progress is shown in the **Agents** sidebar (the CoClaw activity bar icon). Tune fan-out width with `CoClaw.agents.maxParallelCoders` (ceiling) and `CoClaw.agents.minParallelCoders` (floor — pads small tasks with generic lanes), and switch modes with `CoClaw.agents.mode` (`off`, `slash`, `always`).
 
+Every `/agents` run also ends with an automatic **final reviewer** task (tagged `[final review]` in the plan) that depends on every coder and tester sibling, reads their shared-memory output, and produces a single consolidated review with an `APPROVED` / `CHANGES_REQUESTED` verdict. This is controlled by `CoClaw.agents.finalReviewer` (default `auto` — skipped when the planner already produced a covering reviewer; set to `always` to force one on every run, or `off` to disable). The final reviewer uses the **hard** tier, so it picks up whatever model you've assigned to `CoClaw.models.hard`.
+
 ## Command Palette Commands
 
 Open the Command Palette with `Ctrl+Shift+P` and type the command name.

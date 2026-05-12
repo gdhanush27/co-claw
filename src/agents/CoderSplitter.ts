@@ -93,6 +93,9 @@ export function splitCoderTask(
             agent: 'coder',
             prompt: `${task.prompt}\n\nFOCUS UNIT: ${unit}\n${concernGuidance(unit)}\nWork on this unit ONLY. Other parallel coders are handling the rest. Do NOT touch files outside your unit.`,
             units: [unit],
+            // Inherit the parent's difficulty tier so per-task model routing
+            // survives the auto-fanout step.
+            difficulty: task.difficulty,
             dependsOn,
             status: 'pending',
         };

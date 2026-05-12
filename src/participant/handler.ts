@@ -1,13 +1,20 @@
 import * as vscode from 'vscode';
-import { ModelManager } from '../lm/ModelManager';
+import { ModelManager, TIERS } from '../lm/ModelManager';
 import { PromptBuilder } from '../lm/PromptBuilder';
 import { ToolRunner } from '../lm/ToolRunner';
 import { ToolResultCache } from '../lm/ToolResultCache';
 import { getAutonomousTools } from '../lm/toolFilter';
+import { matchModels } from '../lm/modelLookup';
 import { MemoryEngine } from '../memory/MemoryEngine';
 import { StatusBar } from '../ui/statusBar';
 import { TelegramBot } from '../telegram/TelegramBot';
 import { Orchestrator } from '../agents/Orchestrator';
+import type { TaskDifficulty } from '../agents/types';
+
+const VALID_TIERS: ReadonlySet<TaskDifficulty> = new Set(TIERS);
+function isValidTier(v: string): v is TaskDifficulty {
+    return VALID_TIERS.has(v as TaskDifficulty);
+}
 
 export class ParticipantHandler {
     private readonly toolRunner = new ToolRunner();
@@ -190,10 +197,227 @@ export class ParticipantHandler {
                 return this.handleOpenCommand(request, stream, token);
             case 'agents':
                 return this.runOrchestrator(request, stream, token);
+            case 'model':
+                return this.handleModelCommand(request, stream);
             default:
                 stream.markdown(`Unknown command: /${request.command}`);
                 return {};
         }
+    }
+
+    /**
+     * `/model` chat command. Sub-syntax:
+     *
+     *   /model                          → show status (general + per-tier) with one-click buttons
+     *   /model list                     → list available Copilot model families
+     *   /model help                     → usage reminder
+     *   /model <family-or-name>         → switch the GENERAL model (e.g. "/model gpt-4o-mini")
+     *   /model tier <tier>              → open the QuickPick for that tier (light/medium/hard)
+     *   /model tier <tier> <family>     → set the tier model directly (e.g. "/model tier hard claude-opus-4")
+     *   /model clear                    → drop the general model override (revert to first available)
+     *   /model clear <tier>             → drop the tier override (revert to general default)
+     *
+     * All persistence flows through ModelManager (same path used by the
+     * settings GUI, the QuickPick, and Telegram /models) so every surface
+     * sees the change immediately.
+     */
+    private async handleModelCommand(
+        request: vscode.ChatRequest,
+        stream: vscode.ChatResponseStream,
+    ): Promise<vscode.ChatResult> {
+        const args = request.prompt.trim().split(/\s+/).filter(s => s.length > 0);
+        const sub = (args[0] ?? '').toLowerCase();
+
+        try {
+            if (args.length === 0) {
+                await this.renderModelStatus(stream);
+                return {};
+            }
+            if (sub === 'help' || sub === '?') {
+                this.renderModelHelp(stream);
+                return {};
+            }
+            if (sub === 'list' || sub === 'ls') {
+                await this.renderModelList(stream);
+                return {};
+            }
+            if (sub === 'clear') {
+                await this.handleModelClear(stream, args[1]);
+                return {};
+            }
+            if (sub === 'tier') {
+                await this.handleModelTier(stream, args[1], args.slice(2).join(' '));
+                return {};
+            }
+            // Default: treat the whole prompt as a model identifier.
+            await this.handleModelSwitch(stream, request.prompt.trim());
+            return {};
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            stream.markdown(`❌ ${msg}\n`);
+            return {};
+        }
+    }
+
+    private async renderModelStatus(stream: vscode.ChatResponseStream): Promise<void> {
+        const active = await this.modelManager.getActiveModel().catch(() => undefined);
+        const generalPref = this.modelManager.getPreferredFamily();
+        const tiers = this.modelManager.getAllTierFamilies();
+
+        stream.markdown(`## 🤖 CoClaw model\n\n`);
+        if (active) {
+            stream.markdown(`**Active general model:** \`${active.name}\` (family \`${active.family}\`, ${active.maxInputTokens.toLocaleString()} tokens)\n`);
+        } else {
+            stream.markdown(`**Active general model:** _(no Copilot model available — install/sign in to Copilot)_\n`);
+        }
+        if (generalPref) {
+            stream.markdown(`Preferred family: \`${generalPref}\`\n`);
+        } else {
+            stream.markdown(`Preferred family: _(none — auto-pick first available)_\n`);
+        }
+        stream.markdown(`\n**Per-tier overrides (used by \`/agents\`):**\n`);
+        for (const t of TIERS) {
+            const v = tiers[t];
+            stream.markdown(`- \`${t}\` → ${v ? `\`${v}\`` : '_(default — uses general model)_'}\n`);
+        }
+        stream.markdown(`\n`);
+        stream.button({ title: '🔧 Pick general model', command: 'CoClaw.selectModel' });
+        for (const t of TIERS) {
+            stream.button({
+                title: `🎯 Pick ${t} tier`,
+                command: 'CoClaw.selectTierModels',
+                arguments: [t],
+            });
+        }
+        stream.markdown(
+            `\n_Quick commands:_ \`/model list\`, \`/model gpt-4o-mini\`, \`/model tier hard claude-opus-4\`, \`/model clear\`, \`/model clear hard\`\n`,
+        );
+    }
+
+    private renderModelHelp(stream: vscode.ChatResponseStream): void {
+        stream.markdown(
+            `### \`/model\` usage\n\n` +
+            `| Command | Effect |\n` +
+            `|---|---|\n` +
+            `| \`/model\` | Show current model and per-tier overrides |\n` +
+            `| \`/model list\` | List available Copilot model families |\n` +
+            `| \`/model <family-or-name>\` | Switch the general model (e.g. \`/model gpt-4o-mini\`) |\n` +
+            `| \`/model tier <tier>\` | Open a picker for that tier (\`light\`/\`medium\`/\`hard\`) |\n` +
+            `| \`/model tier <tier> <family>\` | Set tier model directly (e.g. \`/model tier hard claude-opus-4\`) |\n` +
+            `| \`/model clear\` | Drop the general override |\n` +
+            `| \`/model clear <tier>\` | Drop the tier override |\n`,
+        );
+    }
+
+    private async renderModelList(stream: vscode.ChatResponseStream): Promise<void> {
+        const models = await this.modelManager.getAvailableModels(true);
+        if (models.length === 0) {
+            stream.markdown(`_No Copilot models available. Install / sign in to GitHub Copilot first._\n`);
+            return;
+        }
+        const seen = new Map<string, vscode.LanguageModelChat>();
+        for (const m of models) {
+            if (!seen.has(m.family)) { seen.set(m.family, m); }
+        }
+        stream.markdown(`### Available Copilot model families (${seen.size})\n\n`);
+        for (const m of seen.values()) {
+            stream.markdown(`- \`${m.family}\` — **${m.name}** (${m.maxInputTokens.toLocaleString()} tokens)\n`);
+        }
+        stream.markdown(`\n_Switch with \`/model <family>\` — e.g. \`/model ${[...seen.keys()][0]}\`._\n`);
+    }
+
+    private async handleModelSwitch(stream: vscode.ChatResponseStream, query: string): Promise<void> {
+        const models = await this.modelManager.getAvailableModels(true);
+        if (models.length === 0) {
+            stream.markdown(`_No Copilot models available. Install / sign in to GitHub Copilot first._\n`);
+            return;
+        }
+        const matches = matchModels(models, query);
+        if (matches.length === 0) {
+            stream.markdown(`No Copilot model matched \`${escapeInline(query)}\`.\n\n`);
+            await this.renderModelList(stream);
+            return;
+        }
+        if (matches.length === 1) {
+            const m = matches[0];
+            await this.modelManager.setPreferredFamily(m.family);
+            await this.statusBar?.update();
+            stream.markdown(`✅ Switched general model to **${m.name}** (\`${m.family}\`).\n`);
+            return;
+        }
+        // Ambiguous — render disambiguation buttons.
+        stream.markdown(`\`${escapeInline(query)}\` matched ${matches.length} models. Pick one:\n\n`);
+        for (const m of matches) {
+            stream.button({
+                title: `${m.name} (${m.family})`,
+                command: 'CoClaw.setModelFamily',
+                arguments: [m.family],
+            });
+        }
+    }
+
+    private async handleModelTier(
+        stream: vscode.ChatResponseStream,
+        rawTier: string | undefined,
+        familyQuery: string,
+    ): Promise<void> {
+        if (!rawTier) {
+            stream.markdown(
+                `Usage: \`/model tier <light|medium|hard> [family]\`. Without a family, a picker opens.\n`,
+            );
+            return;
+        }
+        const tier = rawTier.toLowerCase();
+        if (!isValidTier(tier)) {
+            stream.markdown(`Unknown tier \`${escapeInline(rawTier)}\`. Use one of: \`light\`, \`medium\`, \`hard\`.\n`);
+            return;
+        }
+        if (!familyQuery) {
+            // Defer to the QuickPick — it owns the live model list.
+            await vscode.commands.executeCommand('CoClaw.selectTierModels', tier);
+            return;
+        }
+        const models = await this.modelManager.getAvailableModels(true);
+        if (models.length === 0) {
+            stream.markdown(`_No Copilot models available. Install / sign in to GitHub Copilot first._\n`);
+            return;
+        }
+        const matches = matchModels(models, familyQuery);
+        if (matches.length === 0) {
+            stream.markdown(`No Copilot model matched \`${escapeInline(familyQuery)}\`.\n\n`);
+            await this.renderModelList(stream);
+            return;
+        }
+        if (matches.length === 1) {
+            const m = matches[0];
+            await this.modelManager.setTierFamily(tier, m.family);
+            stream.markdown(`✅ \`${tier}\` tier set to **${m.name}** (\`${m.family}\`).\n`);
+            return;
+        }
+        stream.markdown(`\`${escapeInline(familyQuery)}\` matched ${matches.length} models for the **${tier}** tier. Pick one:\n\n`);
+        for (const m of matches) {
+            stream.button({
+                title: `${m.name} (${m.family})`,
+                command: 'CoClaw.setTierModel',
+                arguments: [tier, m.family],
+            });
+        }
+    }
+
+    private async handleModelClear(stream: vscode.ChatResponseStream, target: string | undefined): Promise<void> {
+        if (!target || target.toLowerCase() === 'general' || target.toLowerCase() === 'family') {
+            await this.modelManager.setPreferredFamily('');
+            await this.statusBar?.update();
+            stream.markdown(`🗑 Cleared the general model preference. CoClaw will pick the first available Copilot model.\n`);
+            return;
+        }
+        const tier = target.toLowerCase();
+        if (!isValidTier(tier)) {
+            stream.markdown(`Unknown clear target \`${escapeInline(target)}\`. Use \`/model clear\` (general) or \`/model clear <light|medium|hard>\`.\n`);
+            return;
+        }
+        await this.modelManager.setTierFamily(tier, undefined);
+        stream.markdown(`🗑 Cleared the \`${tier}\` tier override. That tier will now use the general model.\n`);
     }
 
     private async handleMemoryCommand(stream: vscode.ChatResponseStream): Promise<vscode.ChatResult> {
@@ -383,4 +607,13 @@ export class ParticipantHandler {
     private estimateTokens(text: string): number {
         return Math.ceil(text.length / 4);
     }
+}
+
+/**
+ * Strip / escape characters that would close an inline-code span when we
+ * echo user-supplied tokens back inside backticks. Defense-in-depth: keeps
+ * a user typing `` ` `` or `</details>` from poisoning the chat stream.
+ */
+function escapeInline(s: string): string {
+    return s.replace(/`/g, '').replace(/[\r\n]+/g, ' ').slice(0, 120);
 }

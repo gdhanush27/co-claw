@@ -32,6 +32,7 @@ Schema:
       "agent": "coder" | "reviewer" | "tester" | "memory",
       "prompt": "string (focused instruction for this agent)",
       "units": ["optional", "array", "of", "file/paths/or/feature/slices"],
+      "difficulty": "light" | "medium" | "hard"  // optional, defaults to "medium"
       "dependsOn": ["task-id", ...]
     }
   ]
@@ -51,6 +52,11 @@ Schema:
 - A typical plan looks like: 1 coder task (with units) -> 1 reviewer (depends on coder) -> 1 tester (depends on reviewer). Add a memory task at the end ONLY if the user's request implies long-term knowledge worth saving.
 - Use 1-4 tasks total. Be terse in prompts (1-2 sentences).
 - NEVER include a "planner" or "orchestrator" task.
+- DIFFICULTY: tag each task with a tier so the orchestrator can route it to the right model.
+    * "light"  — trivial, formulaic work: typo fixes, rename/version bumps, tiny doc tweaks, mechanical formatting, single-line edits.
+    * "medium" — typical implementation, review, or test work; the default when unsure.
+    * "hard"   — multi-file refactoring, architectural design, security-sensitive logic, complex algorithms, deep reasoning over large context.
+  Be conservative: only escalate to "hard" when extra reasoning capacity would clearly help. Memory distillation is usually "light"; reviewing security-sensitive code is "hard".
 - Output ONLY the JSON object. No explanation.
 </rules>
 
@@ -58,16 +64,22 @@ Schema:
 User task: "Add a rate-limited /api/comments endpoint backed by Postgres."
 Good plan:
 {"tasks":[
-  {"id":"build","agent":"coder","prompt":"Add a rate-limited POST /api/comments endpoint persisted to Postgres.","units":["api-routes","data-model","auth-security","tests"],"dependsOn":[]},
-  {"id":"review","agent":"reviewer","prompt":"Review the new endpoint for security, validation and error handling.","dependsOn":["build"]}
+  {"id":"build","agent":"coder","prompt":"Add a rate-limited POST /api/comments endpoint persisted to Postgres.","units":["api-routes","data-model","auth-security","tests"],"difficulty":"hard","dependsOn":[]},
+  {"id":"review","agent":"reviewer","prompt":"Review the new endpoint for security, validation and error handling.","difficulty":"hard","dependsOn":["build"]}
 ]}
 
 User task: "Redesign the sign-in and sign-up pages with a modern look."
 Good plan:
 {"tasks":[
-  {"id":"redesign","agent":"coder","prompt":"Redesign sign-in and sign-up pages with a modern, clean look.","units":["html-markup","css-styling","js-behavior"],"dependsOn":[]},
-  {"id":"review","agent":"reviewer","prompt":"Review the redesign for accessibility, responsiveness and consistency.","dependsOn":["redesign"]},
-  {"id":"test","agent":"tester","prompt":"Add/update tests for rendering and form submission.","dependsOn":["review"]}
+  {"id":"redesign","agent":"coder","prompt":"Redesign sign-in and sign-up pages with a modern, clean look.","units":["html-markup","css-styling","js-behavior"],"difficulty":"medium","dependsOn":[]},
+  {"id":"review","agent":"reviewer","prompt":"Review the redesign for accessibility, responsiveness and consistency.","difficulty":"medium","dependsOn":["redesign"]},
+  {"id":"test","agent":"tester","prompt":"Add/update tests for rendering and form submission.","difficulty":"light","dependsOn":["review"]}
+]}
+
+User task: "Fix the typo 'recieve' -> 'receive' in README."
+Good plan:
+{"tasks":[
+  {"id":"fix","agent":"coder","prompt":"Fix the 'recieve' -> 'receive' typo in README.","difficulty":"light","dependsOn":[]}
 ]}
 </example>`;
 
