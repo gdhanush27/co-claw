@@ -62,6 +62,42 @@ export class TelegramApi {
         this.baseUrl = `/bot${token}`;
     }
 
+    /**
+     * Strip the bot token from any string that might be logged.
+     *
+     * Node's `https`/`http` errors embed the failed request's URL (which
+     * contains `/bot<TOKEN>/method`) in `.message`, `.stack`, and several
+     * lesser-known sub-fields (`config.url`, `request.path`, etc). Callers
+     * uniformly log `err.message`, so without scrubbing the bot token leaks
+     * into the CoClaw output channel — and from there into bug reports.
+     *
+     * The replacement is a fixed sentinel so the surrounding context (HTTP
+     * method, ECONNREFUSED, etc.) is preserved for debugging.
+     */
+    private scrubToken<T>(value: T): T {
+        if (!this.token) { return value; }
+        if (typeof value === 'string') {
+            return value.split(this.token).join('<redacted-token>') as unknown as T;
+        }
+        if (value instanceof Error) {
+            value.message = this.scrubToken(value.message);
+            if (typeof value.stack === 'string') {
+                value.stack = this.scrubToken(value.stack);
+            }
+            return value;
+        }
+        return value;
+    }
+
+    /** Wrap a rejection so the token never escapes via err.message / err.stack. */
+    private rejectClean(reject: (reason: unknown) => void, err: unknown): void {
+        if (err instanceof Error) {
+            reject(this.scrubToken(err));
+        } else {
+            reject(new Error(this.scrubToken(String(err))));
+        }
+    }
+
     /** Verify the bot token is valid. Returns the bot user info. */
     async getMe(): Promise<TelegramUser> {
         const res = await this.request<TelegramUser>('getMe');
@@ -240,10 +276,10 @@ export class TelegramApi {
                         if (parsed.ok && parsed.result !== undefined) {
                             resolve(parsed.result);
                         } else {
-                            reject(new Error(`Telegram API error: ${parsed.description ?? 'Unknown error'}`));
+                            this.rejectClean(reject, new Error(`Telegram API error: ${parsed.description ?? 'Unknown error'}`));
                         }
                     } catch {
-                        reject(new Error(`Failed to parse Telegram response: ${data.substring(0, 200)}`));
+                        this.rejectClean(reject, new Error(`Failed to parse Telegram response: ${data.substring(0, 200)}`));
                     }
                 });
             });
@@ -254,7 +290,10 @@ export class TelegramApi {
                 if (method === 'getUpdates' && (err as NodeJS.ErrnoException).code === 'ERR_STREAM_DESTROYED') {
                     resolve([] as unknown as T);
                 } else {
-                    reject(err);
+                    // Node's https errors embed the full request URL — including
+                    // `/bot<TOKEN>/method` — in `.message` and `.stack`. Scrub it
+                    // here so the token never reaches the output channel.
+                    this.rejectClean(reject, err);
                 }
             });
             req.on('timeout', () => {
@@ -263,7 +302,7 @@ export class TelegramApi {
                     this.activePollRequest = undefined;
                     resolve([] as unknown as T);
                 } else {
-                    reject(new Error(`Telegram API request timed out: ${method}`));
+                    this.rejectClean(reject, new Error(`Telegram API request timed out: ${method}`));
                 }
             });
 
@@ -330,14 +369,14 @@ export class TelegramApi {
                     try {
                         const parsed: TelegramApiResponse<unknown> = JSON.parse(data);
                         if (parsed.ok) { resolve(); }
-                        else { reject(new Error(`Telegram sendDocument error: ${parsed.description ?? 'unknown'}`)); }
+                        else { this.rejectClean(reject, new Error(`Telegram sendDocument error: ${parsed.description ?? 'unknown'}`)); }
                     } catch {
-                        reject(new Error(`Failed to parse sendDocument response: ${data.substring(0, 200)}`));
+                        this.rejectClean(reject, new Error(`Failed to parse sendDocument response: ${data.substring(0, 200)}`));
                     }
                 });
             });
-            req.on('error', reject);
-            req.on('timeout', () => { req.destroy(); reject(new Error('sendDocument timed out')); });
+            req.on('error', (err) => this.rejectClean(reject, err));
+            req.on('timeout', () => { req.destroy(); this.rejectClean(reject, new Error('sendDocument timed out')); });
             req.write(body);
             req.end();
         });

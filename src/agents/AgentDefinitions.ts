@@ -128,16 +128,46 @@ You are the MEMORY agent. You curate long-term knowledge from the run.
 ${COMMON_BEHAVIOR}
 
 <rules>
-- Read shared memory entries from sibling agents.
+- Read shared memory entries from sibling agents (CoClaw_shared_memory_read).
 - Distill durable facts (decisions, conventions, code patterns) and persist them via CoClaw_memory_write with appropriate type and importance (0.4-0.8).
 - Do NOT save transient implementation details.
 - Keep it to 0-5 entries. Quality over quantity.
-</rules>`;
+</rules>
 
-/** Tools the orchestrator owns and no specialized agent may invoke. */
-const ORCHESTRATOR_ONLY_TOOLS = new Set<string>(['CoClaw_spawn_agent']);
+<output_format>
+End your turn with a brief, plain-text summary in this exact structure. Anything else weakens the artifact a downstream reader (or another /agents run) has to consume.
 
-const allowToolForAllAgents = (toolName: string): boolean => !ORCHESTRATOR_ONLY_TOOLS.has(toolName);
+1. One short sentence describing what you analyzed.
+2. "Persisted N entries" where N is an EXACT integer. Never use vague counts like "22+", "approximately 12", "several". If you wrote zero, say "Persisted 0 entries (nothing durable to save)".
+3. For each entry, ONE bullet line in the form: \`- <memory-key>: <8-15 word summary>\`. The memory key is whatever you passed to CoClaw_memory_write. Surfacing keys lets the user retrieve the full entry directly.
+4. If you also wrote anything to SHARED memory (CoClaw_shared_memory_write), list those keys under a "Shared keys:" line, comma-separated.
+
+Style constraints:
+- Plain text only. NO emojis, NO decorative symbols (✓, →, •, 💓, etc.), NO empty headers, NO conversational filler ("Let me start by...", "Now I'll...", "Ready to proceed...").
+- Severity buckets, when used (e.g. summarizing a reviewer's report), MUST use exact integer counts per bucket, never "+" or ranges.
+- Reference files as \`<path>:<symbol>\` or \`<path>:<line>\` when citing evidence — the user pastes these straight into search.
+</output_format>`;
+
+/**
+ * Tools the orchestrator owns and no specialized agent may invoke.
+ *
+ * Stored in lowercase and matched case-insensitively: VS Code preserves the
+ * registered tool name verbatim, but third-party model gateways (and the
+ * Telegram bridge that re-emits tool calls) sometimes round-trip names with
+ * altered casing. A case-sensitive check on a security boundary is a
+ * privilege-escalation footgun — a model that emitted `coclaw_spawn_agent`
+ * (lowercase) would bypass the planner-only restriction and let any
+ * specialized agent fan out new tasks.
+ */
+const ORCHESTRATOR_ONLY_TOOLS_LC: ReadonlySet<string> = new Set<string>([
+    'coclaw_spawn_agent',
+]);
+
+/** Shared-memory READ tool — must remain accessible even in restricted agents. */
+const PLANNER_ALLOWED_TOOL_LC = 'coclaw_shared_memory_read';
+
+const allowToolForAllAgents = (toolName: string): boolean =>
+    !ORCHESTRATOR_ONLY_TOOLS_LC.has(toolName.toLowerCase());
 
 /** Reviewer is read-only: no file write/edit/delete. */
 const READ_ONLY_TOOL_DENYLIST = [
@@ -150,13 +180,16 @@ const allowToolForReviewer = (toolName: string): boolean => {
     return !READ_ONLY_TOOL_DENYLIST.some(kw => lower.includes(kw));
 };
 
+const allowToolForPlanner = (toolName: string): boolean =>
+    toolName.toLowerCase() === PLANNER_ALLOWED_TOOL_LC;
+
 export const AGENT_DEFINITIONS: Record<AgentRole, AgentDefinition> = {
     planner: {
         role: 'planner',
         displayName: 'Planner',
         systemPrompt: PLANNER_PROMPT,
         // Planner does not call tools; restrict everything except shared memory read for context.
-        allowsTool: (toolName) => toolName === 'CoClaw_shared_memory_read',
+        allowsTool: allowToolForPlanner,
     },
     coder: {
         role: 'coder',

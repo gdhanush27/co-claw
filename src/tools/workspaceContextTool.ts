@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import * as path from 'path';
+import { isPathInsideAny } from '../util/pathSafety';
 
 export class WorkspaceContextTool implements vscode.LanguageModelTool<Record<string, never>> {
     async invoke(
@@ -46,10 +46,10 @@ export class WorkspaceContextTool implements vscode.LanguageModelTool<Record<str
     }
 
     private isInsideWorkspace(fsPath: string, folders: readonly vscode.WorkspaceFolder[]): boolean {
-        const normalized = path.normalize(fsPath);
-        return folders.some(wf => {
-            const root = path.normalize(wf.uri.fsPath);
-            return normalized.startsWith(root + path.sep) || normalized === root;
-        });
+        // Delegated to the shared `pathSafety` helper so symlinks are
+        // resolved and Windows drive-letter casing differences don't cause
+        // false negatives (or — more dangerously — false positives if a
+        // symlink inside the workspace escapes it).
+        return isPathInsideAny(fsPath, folders.map(wf => wf.uri.fsPath));
     }
 }

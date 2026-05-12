@@ -260,6 +260,18 @@ export class Orchestrator implements AgentSpawner {
             stream.markdown(`\n\n_Orchestrator error: ${e instanceof Error ? e.message : String(e)}_`);
             this.registry.completeRun(runId, 'failed');
         } finally {
+            // Drain any spawn promises that didn't get resolved by the DAG
+            // loop. This is the safety net for the hang scenarios that
+            // motivated the rewrite:
+            //   - dynamic task spawned after the DAG main loop exited
+            //   - dynamic task whose `dependsOn` pointed at a non-existent
+            //     id (so isReady() never returned true and cascadeFail
+            //     never reached it)
+            //   - cancellation race where the spawner fired between the
+            //     cancellation check and the registry sweep
+            // Without this drain, the spawning agent's tool call would
+            // wait forever and the chat panel would silently hang.
+            this.drainSpawnWaiters('run completed without resolving this task');
             this.spawnerHolder.current = undefined;
         }
     }
@@ -274,6 +286,39 @@ export class Orchestrator implements AgentSpawner {
     ): Promise<{ taskId: string; status: string; output?: string; error?: string }> {
         const run = this.registry.getRun(runId);
         if (!run) { throw new Error(`Run ${runId} not found`); }
+
+        // Refuse to spawn into a run that's no longer accepting work. The
+        // caller is the spawn-agent tool, which would otherwise be left
+        // holding a pending promise forever — the orchestrator's main
+        // loop has already exited and `resolveSpawn` will never fire.
+        // 'pending' is the brief pre-setTasks window where spawning is
+        // also unsafe (the DAG loop hasn't started); 'done' / 'failed' are
+        // the post-loop states.
+        if (run.status === 'done' || run.status === 'failed') {
+            return {
+                taskId: '',
+                status: 'failed',
+                error: `Run ${runId} is no longer accepting tasks (status=${run.status}).`,
+            };
+        }
+
+        // Validate dependsOn ids against the current task list. A typo
+        // here used to leave `isReady` returning false forever: the task
+        // would sit pending, the DAG loop would exit when nothing else
+        // was running, and the spawn promise would hang. Failing the
+        // spawn synchronously surfaces the bug to the calling agent
+        // (which can then retry with the correct id).
+        const knownIds = new Set(run.tasks.map(t => t.id));
+        const unknownDeps = dependsOn.filter(d => !knownIds.has(d));
+        if (unknownDeps.length > 0) {
+            return {
+                taskId: '',
+                status: 'failed',
+                error: `Unknown dependsOn ids: ${unknownDeps.join(', ')}. ` +
+                    `Spawn the dependency first, or omit it from dependsOn.`,
+            };
+        }
+
         const taskId = `dyn-${role}-${run.tasks.length + 1}`;
         const newTask: SubTask = {
             id: taskId,
@@ -289,6 +334,23 @@ export class Orchestrator implements AgentSpawner {
         return new Promise(resolve => {
             this.spawnWaiters.set(taskId, { resolve });
         });
+    }
+
+    /**
+     * Resolve every still-pending spawn waiter with a synthetic failure.
+     * Called from `Orchestrator.run`'s finally to guarantee no spawn
+     * promise outlives the run that owns it.
+     */
+    private drainSpawnWaiters(reason: string): void {
+        if (this.spawnWaiters.size === 0) { return; }
+        for (const [taskId, w] of this.spawnWaiters) {
+            try {
+                w.resolve({ taskId, status: 'failed', error: reason });
+            } catch (err) {
+                Logger.warn('orchestrator', `drainSpawnWaiters: ${taskId}: ${err instanceof Error ? err.message : String(err)}`);
+            }
+        }
+        this.spawnWaiters.clear();
     }
 
     // --- helpers ---
