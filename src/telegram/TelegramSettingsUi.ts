@@ -29,6 +29,28 @@ export interface SettingDefinition {
 }
 
 /**
+ * Discover the currently-available Copilot model families and surface them
+ * as dropdown buttons. Extracted once so the four "pick a model" settings
+ * (general model + 3 tier overrides) share a single implementation instead
+ * of duplicating the same try/catch + dedupe block.
+ *
+ * Failures (e.g. Copilot not installed) intentionally degrade to an empty
+ * list so the settings panel still renders without throwing.
+ */
+const copilotFamilyOptions = async (): Promise<DynamicOption[]> => {
+    try {
+        const models = await vscode.lm.selectChatModels({ vendor: 'copilot' });
+        const seen = new Map<string, string>();
+        for (const m of models) {
+            if (!seen.has(m.family)) { seen.set(m.family, m.name); }
+        }
+        return Array.from(seen.entries()).map(([family, name]) => ({ value: family, label: name }));
+    } catch {
+        return [];
+    }
+};
+
+/**
  * Curated list of CoClaw settings exposed via the Telegram /settings UI.
  * Mirrors the contributions in package.json.
  */
@@ -65,19 +87,33 @@ export const SETTINGS: SettingDefinition[] = [
         description: 'Preferred Copilot model family (blank = default)',
         type: 'string',
         group: 'Model',
-        dynamicOptions: async () => {
-            try {
-                const models = await vscode.lm.selectChatModels({ vendor: 'copilot' });
-                // Deduplicate by family while keeping the first model's name as label.
-                const seen = new Map<string, string>();
-                for (const m of models) {
-                    if (!seen.has(m.family)) { seen.set(m.family, m.name); }
-                }
-                return Array.from(seen.entries()).map(([family, name]) => ({ value: family, label: name }));
-            } catch {
-                return [];
-            }
-        },
+        dynamicOptions: copilotFamilyOptions,
+    },
+
+    // Model Tiers — per-difficulty model overrides used by /agents orchestration.
+    {
+        key: 'CoClaw.models.light',
+        label: 'Light model',
+        description: 'Model for light/simple tasks (fast, cheap)',
+        type: 'string',
+        group: 'Model Tiers',
+        dynamicOptions: copilotFamilyOptions,
+    },
+    {
+        key: 'CoClaw.models.medium',
+        label: 'Medium model',
+        description: 'Model for medium-complexity tasks (balanced)',
+        type: 'string',
+        group: 'Model Tiers',
+        dynamicOptions: copilotFamilyOptions,
+    },
+    {
+        key: 'CoClaw.models.hard',
+        label: 'Hard model',
+        description: 'Model for hard/complex tasks (most capable)',
+        type: 'string',
+        group: 'Model Tiers',
+        dynamicOptions: copilotFamilyOptions,
     },
 ];
 

@@ -88,4 +88,27 @@ describe('CoderSplitter splitCoderTask', () => {
         assert.strictEqual(r.replacements.length, 1);
         assert.strictEqual(r.replacements[0], t, 'non-coder tasks should be returned unchanged');
     });
+
+    it('propagates parent difficulty into split child tasks', () => {
+        // Per-tier model routing relies on every fanned-out coder inheriting
+        // the parent's difficulty; if this regresses, all child coders silently
+        // run on the default tier instead of the requested one.
+        const t: SubTask = { ...task('build feature', ['ui.tsx', 'api.ts']), difficulty: 'hard' };
+        const r = splitCoderTask(t, '', 4, 1);
+        assert.strictEqual(r.didSplit, true);
+        for (const child of r.replacements) {
+            assert.strictEqual(child.difficulty, 'hard',
+                `child ${child.id} should inherit parent's 'hard' difficulty`);
+        }
+    });
+
+    it('leaves child difficulty undefined when parent has none', () => {
+        const t = task('build feature', ['ui.tsx', 'api.ts']);
+        const r = splitCoderTask(t, '', 4, 1);
+        assert.strictEqual(r.didSplit, true);
+        for (const child of r.replacements) {
+            assert.strictEqual(child.difficulty, undefined,
+                'absent parent difficulty must not be invented by the splitter');
+        }
+    });
 });

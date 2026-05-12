@@ -472,6 +472,7 @@ export class TelegramBot {
                 '`/stop` — Stop the Telegram bridge',
                 '`/memory` — Show memory summary',
                 '`/settings` — Open interactive settings UI (alias: `/s`)',
+                '`/models` — Pick the model for each difficulty tier (alias: `/m`)',
             ];
             if (this._openMode) {
                 helpLines.push(
@@ -498,6 +499,10 @@ export class TelegramBot {
         }
         if (text === '/settings' || text === '/s') {
             await this.openSettingsPanel(chatId);
+            return;
+        }
+        if (text === '/models' || text === '/m') {
+            await this.openModelTiersPanel(chatId);
             return;
         }
         // Heartbeat commands (/open mode only)
@@ -1125,6 +1130,17 @@ export class TelegramBot {
         const { text, buttons } = buildSettingsRootPanel();
         await this.api!.sendMessageWithButtons(chatId, text, buttons);
         this.vscodeStream?.markdown(`> **Telegram:** /settings opened\n\n`);
+    }
+
+    /**
+     * Shortcut that jumps straight into the "Model Tiers" group so the user
+     * can pick the model for each difficulty tier (light/medium/hard) without
+     * navigating /settings → group selection first.
+     */
+    private async openModelTiersPanel(chatId: number): Promise<void> {
+        const { text, buttons } = buildSettingsGroupPanel('Model Tiers');
+        await this.api!.sendMessageWithButtons(chatId, text, buttons);
+        this.vscodeStream?.markdown(`> **Telegram:** /models opened\n\n`);
     }
 
     private async handleSettingsUiCallback(

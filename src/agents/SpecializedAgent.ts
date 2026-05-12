@@ -15,10 +15,19 @@ export interface AgentRunResult {
  * Runs a single specialized agent (one role) as a self-contained
  * model.sendRequest tool-loop. Uses all registered vscode.lm.tools that
  * the role's allowsTool() permits, plus the shared-memory tools.
+ *
+ * The model is supplied per `runAgent` call so the orchestrator can route
+ * different sub-tasks to different model tiers (light / medium / hard)
+ * without rebuilding the agent runner.
  */
 export class SpecializedAgent {
+    /**
+     * @param defaultModel Fallback model used when a caller does not pass one
+     *                     to `runAgent`. Typically the result of
+     *                     `ModelManager.getActiveModel()`.
+     */
     constructor(
-        private readonly model: vscode.LanguageModelChat,
+        private readonly defaultModel: vscode.LanguageModelChat,
     ) {}
 
     async runAgent(
@@ -29,9 +38,11 @@ export class SpecializedAgent {
         token: vscode.CancellationToken,
         toolInvocationToken?: vscode.ChatParticipantToolToken,
         onText?: (chunk: string) => void,
+        model?: vscode.LanguageModelChat,
     ): Promise<AgentRunResult> {
         const def = AGENT_DEFINITIONS[role];
         if (!def) { throw new Error(`Unknown agent role: ${role}`); }
+        const activeModel = model ?? this.defaultModel;
 
         // Two-stage selection:
         //   1. Drop everything the role's own allow-list rejects.
@@ -57,7 +68,7 @@ You can publish results by calling CoClaw_shared_memory_write with runId="${runI
 
         let fullText = '';
         let toolCallsMade = 0;
-        let response = await this.model.sendRequest(messages, { tools }, token);
+        let response = await activeModel.sendRequest(messages, { tools }, token);
 
         for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
             if (token.isCancellationRequested) { break; }
@@ -96,7 +107,7 @@ You can publish results by calling CoClaw_shared_memory_write with runId="${runI
             messages.push(vscode.LanguageModelChatMessage.User(resultParts));
 
             try {
-                response = await this.model.sendRequest(messages, { tools }, token);
+                response = await activeModel.sendRequest(messages, { tools }, token);
             } catch (e) {
                 fullText += `\n[agent error: ${e instanceof Error ? e.message : String(e)}]`;
                 break;

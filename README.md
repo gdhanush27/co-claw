@@ -2,7 +2,7 @@
 
 AI coding assistant with persistent memory, powered by GitHub Copilot.
 
-![Version](https://img.shields.io/badge/version-0.2-informational)
+![Version](https://img.shields.io/badge/version-0.3-informational)
 [![CI](https://github.com/gdhanush27/co-claw/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gdhanush27/co-claw/actions/workflows/ci.yml)
 ![VS Code](https://img.shields.io/badge/VS%20Code-1.93%2B-blue?logo=visual-studio-code)
 ![Copilot Required](https://img.shields.io/badge/Copilot-Required-orange?logo=github)
