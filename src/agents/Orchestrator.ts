@@ -8,6 +8,7 @@ import { splitCoderTask } from './CoderSplitter';
 import { AGENT_DEFINITIONS } from './AgentDefinitions';
 import { AgentRole, PlanDocument, SubTask } from './types';
 import { AgentSpawner } from '../tools/spawnAgentTool';
+import { Logger } from '../util/Logger';
 
 export interface SpawnerHolder {
     current: AgentSpawner | undefined;
@@ -19,7 +20,10 @@ interface PendingSpawn {
 
 export class Orchestrator implements AgentSpawner {
     private maxParallelCoders = 4;
+    private minParallelCoders = 1;
     private spawnWaiters = new Map<string, PendingSpawn>();
+    /** Last clamp signature we already warned about — prevents log spam on every /agents run. */
+    private lastClampWarning: string | undefined;
 
     constructor(
         private readonly modelManager: ModelManager,
@@ -34,11 +38,39 @@ export class Orchestrator implements AgentSpawner {
         token: vscode.CancellationToken,
         toolInvocationToken?: vscode.ChatParticipantToolToken,
     ): Promise<void> {
-        this.maxParallelCoders = vscode.workspace.getConfiguration('CoClaw.agents')
-            .get<number>('maxParallelCoders', 4);
+        const agentsCfg = vscode.workspace.getConfiguration('CoClaw.agents');
+        this.maxParallelCoders = agentsCfg.get<number>('maxParallelCoders', 4);
+        // min must always be ≤ max; clamp rather than failing so a
+        // misconfigured pair (e.g. min=4, max=2) still lets /agents run.
+        // Surface a one-shot warning per (rawMin, max) pair so the user knows
+        // their setting was overridden — silent clamping is confusing.
+        const rawMin = agentsCfg.get<number>('minParallelCoders', 1);
+        this.minParallelCoders = Math.max(1, Math.min(rawMin, this.maxParallelCoders));
+        if (rawMin > this.maxParallelCoders) {
+            const sig = `${rawMin}-${this.maxParallelCoders}`;
+            if (this.lastClampWarning !== sig) {
+                this.lastClampWarning = sig;
+                Logger.warn(
+                    'orchestrator',
+                    `'CoClaw.agents.minParallelCoders' (${rawMin}) is greater than 'maxParallelCoders' (${this.maxParallelCoders}); ` +
+                    `clamping the floor to ${this.maxParallelCoders}. Raise 'maxParallelCoders' if you really want ${rawMin} parallel coders.`,
+                );
+                stream.markdown(
+                    `> ⚠️ \`CoClaw.agents.minParallelCoders\` (${rawMin}) > \`maxParallelCoders\` (${this.maxParallelCoders}); using **${this.maxParallelCoders}** as the floor for this run.\n\n`,
+                );
+            }
+        }
+
+        // Per-run override: a leading/trailing `--full` (or `--all`,
+        // `--no-truncate`) flag tells the renderer to skip its char cap for
+        // this run only. Stripped from the prompt before the planner sees it.
+        const { prompt, fullOutput: flagFullOutput } = parseRunFlags(userPrompt);
+        const settingFullOutput = vscode.workspace.getConfiguration('CoClaw.agents')
+            .get<boolean>('alwaysShowFullOutput', false);
+        const fullOutput = flagFullOutput || settingFullOutput;
 
         const runId = randomUUID();
-        const run = this.registry.createRun(runId, userPrompt);
+        const run = this.registry.createRun(runId, prompt);
         this.spawnerHolder.current = this;
 
         try {
@@ -46,12 +78,17 @@ export class Orchestrator implements AgentSpawner {
             const agentRunner = new SpecializedAgent(model);
 
             stream.markdown(`### Multi-agent run \`${runId.substring(0, 8)}\`\n\n`);
+            if (flagFullOutput) {
+                stream.markdown(`_Flag detected: \`--full\` — per-task output truncation disabled for this run._\n\n`);
+            } else if (settingFullOutput) {
+                stream.markdown(`_\`CoClaw.agents.alwaysShowFullOutput\` is on — per-task output truncation disabled._\n\n`);
+            }
             stream.progress('Planner: decomposing task...');
 
             // --- Step A: Planner ---
             const plannerResult = await agentRunner.runAgent(
                 'planner',
-                `User task:\n${userPrompt}\n\nProduce the JSON DAG now.`,
+                `User task:\n${prompt}\n\nProduce the JSON DAG now.`,
                 runId,
                 'planner',
                 token,
@@ -63,7 +100,7 @@ export class Orchestrator implements AgentSpawner {
                 stream.markdown('_Planner did not return valid JSON; retrying with strict reminder..._\n\n');
                 const retry = await agentRunner.runAgent(
                     'planner',
-                    `Your previous output was not valid JSON. Output ONLY a JSON object matching the required schema. User task:\n${userPrompt}`,
+                    `Your previous output was not valid JSON. Output ONLY a JSON object matching the required schema. User task:\n${prompt}`,
                     runId,
                     'planner',
                     token,
@@ -77,7 +114,7 @@ export class Orchestrator implements AgentSpawner {
                     tasks: [{
                         id: 'coder-1',
                         agent: 'coder',
-                        prompt: userPrompt,
+                        prompt,
                         dependsOn: [],
                         status: 'pending',
                     }],
@@ -85,7 +122,7 @@ export class Orchestrator implements AgentSpawner {
             }
 
             // --- Step A.5: Auto-fanout coder tasks ---
-            plan.tasks = this.applyAutoFanout(plan.tasks, userPrompt);
+            plan.tasks = this.applyAutoFanout(plan.tasks, prompt);
 
             // Cycle check
             if (this.hasCycle(plan.tasks)) {
@@ -98,13 +135,13 @@ export class Orchestrator implements AgentSpawner {
             this.renderPlan(plan.tasks, stream);
 
             // --- Step B: Dependency loop ---
-            await this.executeDag(runId, plan.tasks, agentRunner, stream, token, toolInvocationToken);
+            await this.executeDag(runId, plan.tasks, agentRunner, stream, token, toolInvocationToken, fullOutput);
 
             // --- Step C: Summary ---
             const finalRun = this.registry.getRun(runId)!;
             const anyFailed = finalRun.tasks.some(t => t.status === 'failed');
             this.registry.completeRun(runId, anyFailed ? 'failed' : 'done');
-            this.renderSummary(finalRun.tasks, stream);
+            this.renderSummary(finalRun.tasks, stream, fullOutput);
         } catch (e) {
             stream.markdown(`\n\n_Orchestrator error: ${e instanceof Error ? e.message : String(e)}_`);
             this.registry.completeRun(runId, 'failed');
@@ -160,7 +197,7 @@ export class Orchestrator implements AgentSpawner {
 
         for (const t of tasks) {
             if (t.agent !== 'coder') { out.push(t); continue; }
-            const split = splitCoderTask(t, userPrompt, this.maxParallelCoders);
+            const split = splitCoderTask(t, userPrompt, this.maxParallelCoders, this.minParallelCoders);
             if (split.didSplit) {
                 remap.set(t.id, split.replacements.map(r => r.id));
                 out.push(...split.replacements);
@@ -224,17 +261,26 @@ export class Orchestrator implements AgentSpawner {
         stream.markdown('\n');
     }
 
-    private renderSummary(tasks: SubTask[], stream: vscode.ChatResponseStream): void {
+    private renderSummary(tasks: SubTask[], stream: vscode.ChatResponseStream, fullOutput = false): void {
         const counts = { done: 0, failed: 0, pending: 0, running: 0 };
         for (const t of tasks) { counts[t.status]++; }
         stream.markdown(`\n### Summary\n`);
         stream.markdown(`Done: ${counts.done} · Failed: ${counts.failed}${counts.pending ? ` · Skipped: ${counts.pending}` : ''}\n\n`);
+
+        const cap = resolveOutputCap(fullOutput);
+
         for (const t of tasks) {
             const icon = t.status === 'done' ? '✓' : t.status === 'failed' ? '✗' : '·';
             stream.markdown(`**${icon} ${t.id} [${t.agent}]**\n`);
             if (t.output) {
-                const snippet = t.output.length > 400 ? t.output.substring(0, 400) + '…' : t.output;
-                stream.markdown(`\n${snippet}\n\n`);
+                const out = t.output;
+                if (out.length > cap) {
+                    const head = out.substring(0, cap);
+                    const dropped = out.length - cap;
+                    stream.markdown(`\n${head}\n\n_[output truncated — ${dropped.toLocaleString()} more chars dropped. Raise \`CoClaw.agents.summaryMaxChars\` to see the full text (set to 0 for unlimited).]_\n\n`);
+                } else {
+                    stream.markdown(`\n${out}\n\n`);
+                }
             } else if (t.error) {
                 stream.markdown(`\n_${t.error}_\n\n`);
             }
@@ -248,6 +294,7 @@ export class Orchestrator implements AgentSpawner {
         stream: vscode.ChatResponseStream,
         token: vscode.CancellationToken,
         toolInvocationToken?: vscode.ChatParticipantToolToken,
+        fullOutput = false,
     ): Promise<void> {
         const byId = () => new Map(this.registry.getRun(runId)!.tasks.map(t => [t.id, t]));
         const inFlight = new Map<string, Promise<void>>();
@@ -291,9 +338,14 @@ export class Orchestrator implements AgentSpawner {
                         token,
                         toolInvocationToken,
                     );
-                    // Persist the agent's text output to shared memory automatically
+                    // Persist the agent's text output to shared memory automatically.
+                    // Same cap source as the chat renderer so raising one raises
+                    // the other (otherwise dependent agents would still see a
+                    // truncated view of their predecessors).
                     if (result.text.trim()) {
-                        await this.sharedStore.write(runId, `${task.agent}:${task.id}`, result.text.substring(0, 4000), task.agent);
+                        const cap = resolveOutputCap(fullOutput);
+                        const stored = result.text.length > cap ? result.text.substring(0, cap) : result.text;
+                        await this.sharedStore.write(runId, `${task.agent}:${task.id}`, stored, task.agent);
                     }
                     this.registry.updateTask(runId, task.id, {
                         status: 'done',
@@ -379,3 +431,65 @@ export class Orchestrator implements AgentSpawner {
         }
     }
 }
+
+/** Recognized aliases for the "no truncation" run flag. */
+const FULL_OUTPUT_FLAGS: ReadonlySet<string> = new Set([
+    '--full', '--all', '--no-truncate', '--notrunc',
+]);
+
+/**
+ * Resolve the per-task character cap, honoring (in order):
+ *   1. The per-run override (`--full` flag from `parseRunFlags`).
+ *   2. `CoClaw.agents.alwaysShowFullOutput` (global "no truncation" toggle).
+ *   3. `CoClaw.agents.summaryMaxChars` (numeric cap; 0 = unlimited).
+ *   4. The default of 8000 characters.
+ *
+ * Returns `Infinity` when truncation should be skipped, so callers can use
+ * `text.length > cap` uniformly without special-casing the unlimited mode.
+ */
+export function resolveOutputCap(perRunFullOutput = false): number {
+    let cfg: vscode.WorkspaceConfiguration | undefined;
+    try { cfg = vscode.workspace.getConfiguration('CoClaw.agents'); }
+    catch { cfg = undefined; }
+
+    if (perRunFullOutput) { return Number.POSITIVE_INFINITY; }
+    if (cfg?.get<boolean>('alwaysShowFullOutput', false)) { return Number.POSITIVE_INFINITY; }
+
+    const rawCap = cfg?.get<number>('summaryMaxChars', 8000) ?? 8000;
+    if (!Number.isFinite(rawCap) || rawCap <= 0) { return Number.POSITIVE_INFINITY; }
+    return Math.floor(rawCap);
+}
+
+/**
+ * Strip a leading or trailing run-control flag (e.g. `--full`) from the
+ * raw `/agents` prompt. Mid-prompt occurrences are preserved verbatim so
+ * a user actually writing about a literal `--full` flag isn't munged.
+ *
+ * Exported visibility: kept private to the file but written as a free
+ * function to make it easy to unit-test independently of the orchestrator.
+ */
+export function parseRunFlags(raw: string): { prompt: string; fullOutput: boolean } {
+    let prompt = raw;
+    let fullOutput = false;
+    let changed = true;
+    // Strip flags repeatedly so e.g. "--full --all do X" still works.
+    while (changed) {
+        changed = false;
+        const trimmed = prompt.trim();
+        const leading = trimmed.match(/^(\S+)\s*/);
+        if (leading && FULL_OUTPUT_FLAGS.has(leading[1].toLowerCase())) {
+            prompt = trimmed.slice(leading[0].length);
+            fullOutput = true;
+            changed = true;
+            continue;
+        }
+        const trailing = trimmed.match(/\s+(\S+)$/);
+        if (trailing && FULL_OUTPUT_FLAGS.has(trailing[1].toLowerCase())) {
+            prompt = trimmed.slice(0, trimmed.length - trailing[0].length);
+            fullOutput = true;
+            changed = true;
+        }
+    }
+    return { prompt: prompt.trim(), fullOutput };
+}
+

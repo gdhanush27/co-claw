@@ -121,9 +121,64 @@ For full setup and remote usage details, see [docs/telegram.md](docs/telegram.md
 | `CoClaw.telegram.silentUnauthorized` | `false` | When `true`, silently drop messages from non-linked users instead of replying with `Unauthorized` |
 | `CoClaw.agents.mode` | `slash` | Multi-agent mode: `off`, `slash` (only on `/agents`), or `always` (route every prompt) |
 | `CoClaw.agents.maxParallelCoders` | `4` | Maximum number of coder agents that may run in parallel (1–8) |
+| `CoClaw.agents.minParallelCoders` | `1` | Minimum number of coder agents to spawn per task. The splitter pads small tasks with generic lanes (implementation, tests, docs, …) up to this floor. Capped to `maxParallelCoders` |
+| `CoClaw.agents.summaryMaxChars` | `8000` | Per-task character cap for the multi-agent run summary and the copy persisted to shared memory. `0` = unlimited |
+| `CoClaw.agents.alwaysShowFullOutput` | `false` | When `true`, every `/agents` run skips the per-task cap (equivalent to typing `--full` on every prompt). One-shot alternative: prefix or suffix your prompt with `--full` (aliases: `--all`, `--no-truncate`) |
 | `CoClaw.tools.maxPerRequest` | `120` | Hard cap on tools sent per LM request. Lower this if a model rejects calls with “Cannot have more than N tools per request” (most providers cap at 128) |
 | `CoClaw.tools.exclude` | `[]` | Substring patterns; matching tool names are dropped before the request reaches the model (e.g. `["mssql", "jupyter"]`) |
 | `CoClaw.tools.priority` | `[]` | Substring patterns; matching tools are bumped above CoClaw’s own tools so they survive the per-request cap |
+
+## Development
+
+```bash
+# Install dependencies
+npm install
+
+# Build (production)
+npm run build
+
+# Watch mode (development)
+npm run watch
+
+# Type-check
+npm run typecheck
+
+# Lint
+npm run lint
+
+# Run tests
+npm test
+
+# Package as .vsix
+npm run package
+```
+
+To debug, open the project in VS Code and press **F5** — this launches an Extension Development Host with CoClaw loaded.
+
+## Architecture
+
+```
+src/
+├── extension.ts          # Extension entry point
+├── agents/               # Multi-agent orchestration (Planner, Coder, Reviewer, Tester, Memory)
+├── commands/             # VS Code command implementations
+├── cron/                 # Cron job scheduler for /open mode
+├── heartbeat/            # Heartbeat checks for /open mode
+├── lm/                   # Language model integration (model manager, prompt builder, tool filter)
+├── memory/               # Two-layer memory system (daily + long-term)
+├── participant/          # Copilot Chat participant handler
+├── profile/              # Identity (SOUL) and user profile (USER) management
+├── telegram/             # Telegram bot bridge
+├── tools/                # LM tool definitions and handlers
+├── ui/                   # Tree views, webviews, status bar
+└── util/                 # Shared utilities
+```
+
+## Contributing
+
+See [CONTRIBUTING.md](.github/CONTRIBUTING.md) for branch protection rules and PR requirements.
+
+In short: open a PR against `main`. CI must pass (`typecheck`, `test`, `build`, `package`) and one CODEOWNER must approve before merging.
 
 ## Documentation
 

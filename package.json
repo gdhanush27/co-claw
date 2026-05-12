@@ -2,7 +2,7 @@
   "name": "CoClaw",
   "displayName": "CoClaw",
   "description": "AI coding assistant with persistent memory, powered by GitHub Copilot",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "publisher": "gdhanush270",
   "license": "Apache-2.0",
   "icon": "icon.png",
@@ -520,6 +520,25 @@
           "minimum": 1,
           "maximum": 8,
           "description": "Maximum number of parallel Coder agents the orchestrator may fan out for a single coder task."
+        },
+        "CoClaw.agents.minParallelCoders": {
+          "type": "integer",
+          "default": 1,
+          "minimum": 1,
+          "maximum": 8,
+          "description": "Minimum number of parallel Coder agents to spawn for a single coder task. When the splitter would produce fewer (e.g. for a small task), it is padded with generic lanes (implementation, tests, docs, ...) up to this floor. Default 1 = current behavior (no forced minimum). Capped to 'maxParallelCoders' if you accidentally set it higher. Use with care: a min above 1 forces parallel work even on atomic tasks like typo fixes."
+        },
+        "CoClaw.agents.summaryMaxChars": {
+          "type": "integer",
+          "default": 8000,
+          "minimum": 0,
+          "maximum": 200000,
+          "description": "Per-task character cap for the multi-agent run summary (and the copy persisted to shared memory). 0 = unlimited (use with care: a runaway agent can dump tens of thousands of chars into the chat). Ignored when 'CoClaw.agents.alwaysShowFullOutput' is true or when '--full' is in the prompt."
+        },
+        "CoClaw.agents.alwaysShowFullOutput": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, every /agents run prints each agent's full output without truncation — equivalent to passing '--full' on every prompt. Overrides 'CoClaw.agents.summaryMaxChars'. Use this if you regularly need long, untrimmed summaries; leave off (default) and pass '--full' ad-hoc when you want occasional long output."
         },
         "CoClaw.tools.maxPerRequest": {
           "type": "integer",
