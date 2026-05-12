@@ -32,21 +32,32 @@ export class SpawnAgentTool implements vscode.LanguageModelTool<Input> {
         options: vscode.LanguageModelToolInvocationOptions<Input>,
         _token: vscode.CancellationToken,
     ): Promise<vscode.LanguageModelToolResult> {
-        const { runId, agent, prompt, dependsOn, difficulty } = options.input;
+        const { runId, agent: rawAgent, prompt, dependsOn, difficulty } = options.input;
         const sp = this.spawner.current;
         if (!sp) {
             return new vscode.LanguageModelToolResult([
                 new vscode.LanguageModelTextPart('Error: no active orchestrator. spawn_agent can only be used during an active multi-agent run.'),
             ]);
         }
-        if (!runId || !agent || !prompt) {
+        if (!runId || !rawAgent || !prompt) {
             return new vscode.LanguageModelToolResult([
                 new vscode.LanguageModelTextPart('Error: "runId", "agent", and "prompt" are required.'),
             ]);
         }
+        // Normalize the role to lowercase before comparing. The role denylist
+        // below is a security boundary — a case-sensitive comparison can be
+        // bypassed by a model emitting `Orchestrator` or `PLANNER`, which then
+        // recurses into a planner sub-task or escapes the agent sandbox.
+        const agent = String(rawAgent).trim().toLowerCase() as AgentRole;
         if (agent === 'orchestrator' || agent === 'planner') {
             return new vscode.LanguageModelToolResult([
                 new vscode.LanguageModelTextPart(`Error: cannot spawn ${agent} as a dynamic task.`),
+            ]);
+        }
+        const KNOWN_AGENTS: ReadonlySet<AgentRole> = new Set<AgentRole>(['coder', 'reviewer', 'tester', 'memory']);
+        if (!KNOWN_AGENTS.has(agent)) {
+            return new vscode.LanguageModelToolResult([
+                new vscode.LanguageModelTextPart(`Error: unknown agent role "${rawAgent}". Expected one of: coder, reviewer, tester, memory.`),
             ]);
         }
         // Validate the optional `difficulty` field against the allow-list so

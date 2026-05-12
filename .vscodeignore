@@ -7,3 +7,7 @@ src/
 tsconfig.json
 esbuild.js
 PLAN.md
+.github/
+docs/
+.vscode/
+memory/

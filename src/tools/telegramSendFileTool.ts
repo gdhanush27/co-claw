@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { TelegramBot } from '../telegram/TelegramBot';
+import { isPathInsideAny } from '../util/pathSafety';
 
 interface Input {
     /** Workspace-relative path (preferred) or absolute path inside the workspace. */
@@ -36,12 +37,12 @@ export class TelegramSendFileTool implements vscode.LanguageModelTool<Input> {
         const rootFs = folders[0].uri.fsPath;
         const abs = path.isAbsolute(rawPath) ? path.normalize(rawPath) : path.normalize(path.join(rootFs, rawPath));
 
-        const isInsideAnyRoot = folders.some(folder => {
-            const wsRoot = path.normalize(folder.uri.fsPath);
-            const rel = path.relative(wsRoot, abs);
-            return !rel.startsWith('..') && !path.isAbsolute(rel);
-        });
-        if (!isInsideAnyRoot) {
+        // Use the shared, realpath-based containment check so a symlink
+        // inside the workspace cannot be used to exfiltrate arbitrary host
+        // files (e.g. `<wsRoot>/link/passwd` where `link` -> `/etc`). A
+        // purely lexical check would let `path.relative` return a benign
+        // string without ever following the symlink.
+        if (!isPathInsideAny(abs, folders.map(f => f.uri.fsPath))) {
             return text(`Error: path must be inside a workspace folder. Got: ${rawPath}`);
         }
 

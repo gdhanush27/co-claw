@@ -7,6 +7,53 @@ import { Logger } from '../util/Logger';
 
 const HEARTBEAT_OK = 'HEARTBEAT_OK';
 
+/**
+ * Parse an "HH:MM" clock string with strict integer validation and a
+ * defaulting strategy that preserves explicit `0` values.
+ *
+ * The previous implementation used `Number(x) || default`, which silently
+ * treats a legitimate `0` (e.g. midnight) as missing and substitutes the
+ * default. This helper distinguishes "actually missing / non-numeric" from
+ * "zero", and additionally clamps to the valid 24h/60m ranges so a typo
+ * like `25:00` doesn't blow up downstream arithmetic.
+ *
+ * Exported for direct unit testing.
+ */
+export function parseClock(
+    raw: string | undefined,
+    defaultH: number,
+    defaultM: number,
+): [number, number] {
+    if (typeof raw !== 'string' || raw.trim() === '') {
+        // Empty / missing input: use BOTH defaults. We can't apply the
+        // "missing minute defaults to 0" rule here because the user
+        // didn't supply an hour either, so the entire field is missing.
+        return [clampH(defaultH), clampM(defaultM)];
+    }
+    const parts = raw.split(':');
+    // CAREFUL: `Number('')` is `0`, not `NaN`, so an empty component
+    // would silently become midnight rather than falling back to the
+    // default. Treat empty / whitespace-only components as missing.
+    const hStr = (parts[0] ?? '').trim();
+    const mStr = (parts[1] ?? '').trim();
+    const hRaw = hStr === '' ? NaN : Number(hStr);
+    // When the hour is supplied but the minute isn't, default to 0 —
+    // matches the natural "08" === "08:00" reading. When the supplied
+    // minute is unparseable (NaN), fall through to `defaultM`.
+    const mRaw = mStr === '' ? 0 : Number(mStr);
+    const h = Number.isFinite(hRaw) ? hRaw : defaultH;
+    const m = Number.isFinite(mRaw) ? mRaw : defaultM;
+    return [clampH(h), clampM(m)];
+}
+
+function clampH(h: number): number {
+    return Math.max(0, Math.min(23, Math.floor(h)));
+}
+
+function clampM(m: number): number {
+    return Math.max(0, Math.min(59, Math.floor(m)));
+}
+
 const DEFAULT_HEARTBEAT_MD = `# Heartbeat Checklist
 
 <!-- CoClaw checks this file periodically when /open is active. -->
@@ -33,6 +80,13 @@ export class Heartbeat {
     private initialTimer: ReturnType<typeof setTimeout> | undefined;
     private running = false;
     private lastHeartbeatTime = 0;
+    /**
+     * Re-entrancy guard. `setInterval` fires regardless of whether the
+     * previous tick is still in flight; without this flag a slow model call
+     * + tight `intervalMinutes` setting stacks N concurrent LLM requests.
+     * The guard is checked at tick-entry and released in `finally`.
+     */
+    private tickInFlight = false;
 
     /** Callback to deliver heartbeat findings to the user (e.g. via Telegram). */
     private onFinding: ((message: string) => Promise<void>) | undefined;
@@ -116,22 +170,34 @@ export class Heartbeat {
 
     /**
      * Single heartbeat tick — checks active hours then runs.
+     *
+     * Re-entrancy guard: if a previous tick is still running (e.g. a slow
+     * model call), drop this tick rather than stacking concurrent LLM
+     * requests. Slow ticks would otherwise pile up indefinitely, exhaust
+     * the model quota and produce out-of-order findings.
      */
     private async tick(): Promise<void> {
+        if (this.tickInFlight) {
+            Logger.warn('CoClaw Heartbeat', 'Tick skipped: previous heartbeat still in flight');
+            return;
+        }
         if (!this.isWithinActiveHours()) {
             return;
         }
 
+        this.tickInFlight = true;
         try {
             const result = await this.runHeartbeat();
             // Log to workspace daily log
             if (result === HEARTBEAT_OK) {
-                await WorkspaceMemory.appendToDailyLog('💓 Heartbeat: OK (nothing to report)');
+                await WorkspaceMemory.appendToDailyLog('Heartbeat: OK (nothing to report)');
             } else {
-                await WorkspaceMemory.appendToDailyLog(`💓 Heartbeat finding: ${result.substring(0, 200)}`);
+                await WorkspaceMemory.appendToDailyLog(`Heartbeat finding: ${result.substring(0, 200)}`);
             }
         } catch (err) {
             Logger.error('CoClaw Heartbeat', 'Tick failed', err);
+        } finally {
+            this.tickInFlight = false;
         }
     }
 
@@ -276,10 +342,13 @@ ${heartbeatMd.trim()}
         }
         const currentMinutes = currentHour * 60 + currentMin;
 
-        const [startH, startM] = startStr.split(':').map(Number);
-        const [endH, endM] = endStr.split(':').map(Number);
-        const startMinutes = (startH || 0) * 60 + (startM || 0);
-        const endMinutes = (endH || 22) * 60 + (endM || 0);
+        // Use `Number.isFinite` rather than `||` so a legitimate "0" (e.g.
+        // `00:00` = midnight) is preserved. The old code collapsed an
+        // explicit `0` hour to the default 22, silently shifting end times.
+        const [startH, startM] = parseClock(startStr, 8, 0);
+        const [endH, endM] = parseClock(endStr, 22, 0);
+        const startMinutes = startH * 60 + startM;
+        const endMinutes = endH * 60 + endM;
 
         if (startMinutes <= endMinutes) {
             // Normal range: e.g. 08:00 - 22:00
